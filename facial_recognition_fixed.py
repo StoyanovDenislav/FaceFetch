@@ -42,8 +42,159 @@ def eye_aspect_ratio(eye):
     ear = (A + B) / (2.0 * C)
     return ear
 
-def detect_photo_spoof(frame, face_location):
-    """Enhanced photo detection using multiple methods - balanced accuracy"""
+# Individual detection methods for parallel execution
+def check_moire_pattern(face_roi):
+    """Detect moiré patterns from screen pixels"""
+    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+    # Apply FFT to detect periodic patterns
+    f = np.fft.fft2(gray)
+    fshift = np.fft.fftshift(f)
+    magnitude = np.abs(fshift)
+    
+    # Look for regular patterns in frequency domain
+    # Screens create periodic patterns, real faces don't
+    h, w = magnitude.shape
+    center_h, center_w = h // 2, w // 2
+    
+    # Exclude DC component (center)
+    mask = np.ones((h, w), dtype=bool)
+    mask[center_h-5:center_h+5, center_w-5:center_w+5] = False
+    
+    # Check for high-frequency peaks (screen pixel grid)
+    freq_peaks = magnitude[mask]
+    peak_ratio = np.max(freq_peaks) / (np.mean(freq_peaks) + 1e-10)
+    
+    score = 0
+    if peak_ratio > 50:  # Strong periodic pattern
+        score = 3.0
+    elif peak_ratio > 30:
+        score = 2.0
+    elif peak_ratio > 20:
+        score = 1.0
+    
+    return score
+
+def check_screen_refresh(face_roi):
+    """Detect screen refresh artifacts and flicker"""
+    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+    
+    # Look for horizontal banding (screen refresh lines)
+    horizontal_profile = np.mean(gray, axis=1)
+    horizontal_var = np.var(np.diff(horizontal_profile))
+    
+    # Screens often have subtle horizontal patterns
+    score = 0
+    if horizontal_var > 50:
+        score = 2.5
+    elif horizontal_var > 30:
+        score = 1.5
+    
+    return score
+
+def check_color_temperature(face_roi):
+    """Analyze color temperature - screens have artificial lighting"""
+    hsv = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
+    
+    # Real faces under natural/room lighting have varied color temps
+    # Screens produce uniform artificial light
+    h_channel = hsv[:, :, 0]
+    s_channel = hsv[:, :, 1]
+    
+    h_std = np.std(h_channel)
+    s_std = np.std(s_channel)
+    
+    # Also check for blue light dominance (LED screens)
+    b, g, r = cv2.split(face_roi)
+    blue_dominance = np.mean(b) / (np.mean(r) + np.mean(g) + 1)
+    
+    score = 0
+    if h_std < 15 and s_std < 20:  # Very uniform color
+        score += 2.0
+    if blue_dominance > 0.6:  # Screen blue light
+        score += 1.5
+    
+    return score
+
+def check_texture_quality(face_roi):
+    """Analyze skin texture - photos/screens lack micro-texture"""
+    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+    
+    # Real skin has pores, fine wrinkles, etc.
+    # Use multiple scales of texture analysis
+    score = 0
+    
+    # Fine texture (pores)
+    fine_edges = cv2.Canny(gray, 50, 150)
+    fine_density = np.sum(fine_edges > 0) / fine_edges.size
+    
+    # Texture variance
+    texture_var = np.var(cv2.Laplacian(gray, cv2.CV_64F))
+    
+    if fine_density < 0.05:  # Too smooth
+        score += 2.0
+    if texture_var < 100:  # Lack of texture
+        score += 2.0
+    
+    return score
+
+def check_edge_artifacts(face_roi):
+    """Detect screen/photo borders and artificial edges"""
+    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 100, 200)
+    
+    # Look for straight lines (screen edges, photo borders)
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=30, maxLineGap=10)
+    
+    score = 0
+    if lines is not None and len(lines) > 5:
+        # Check for long straight lines (unnatural for faces)
+        long_lines = [l for l in lines if np.hypot(l[0][2]-l[0][0], l[0][3]-l[0][1]) > 50]
+        if len(long_lines) > 3:
+            score = 3.0
+        elif len(long_lines) > 1:
+            score = 1.5
+    
+    # Also check overall edge density
+    edge_density = np.sum(edges > 0) / edges.size
+    if edge_density > 0.15:  # Too many edges (screen bezels, photo edges)
+        score += 1.5
+    
+    return score
+
+def check_lighting_consistency(face_roi):
+    """Analyze lighting - screens have flat/uniform lighting"""
+    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+    
+    # Real faces have depth-based lighting gradients
+    # Divide face into regions and check variance
+    h, w = gray.shape
+    regions = [
+        gray[0:h//3, :],           # top
+        gray[h//3:2*h//3, :],      # middle
+        gray[2*h//3:h, :],         # bottom
+        gray[:, 0:w//3],           # left
+        gray[:, w//3:2*w//3],      # center
+        gray[:, 2*w//3:w],         # right
+    ]
+    
+    region_means = [np.mean(r) for r in regions if r.size > 0]
+    lighting_variance = np.var(region_means)
+    
+    score = 0
+    if lighting_variance < 100:  # Too uniform
+        score = 2.0
+    elif lighting_variance < 200:
+        score = 1.0
+    
+    # Also check for artificial brightness
+    overall_brightness = np.mean(gray)
+    if overall_brightness > 200 or overall_brightness < 40:  # Unnatural
+        score += 1.0
+    
+    return score
+
+def detect_photo_spoof(frame, face_location, executor=None):
+    """Parallel anti-spoofing detection - runs all checks simultaneously"""
     top, right, bottom, left = face_location
     # Scale back to original frame size
     top *= 4
@@ -60,99 +211,46 @@ def detect_photo_spoof(frame, face_location):
     
     face_roi = frame[top:bottom, left:right]
     if face_roi.size == 0:
-        return (False, 0.0)  # Return tuple: (is_spoof, confidence_score)
+        return (False, 0.0, {})
     
-    # Convert to grayscale and HSV
-    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
-    hsv = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
+    # If executor provided, run checks in parallel
+    if executor is not None:
+        futures = {
+            'moire': executor.submit(check_moire_pattern, face_roi),
+            'refresh': executor.submit(check_screen_refresh, face_roi),
+            'color_temp': executor.submit(check_color_temperature, face_roi),
+            'texture': executor.submit(check_texture_quality, face_roi),
+            'edges': executor.submit(check_edge_artifacts, face_roi),
+            'lighting': executor.submit(check_lighting_consistency, face_roi)
+        }
+        
+        # Collect results
+        scores = {name: future.result() for name, future in futures.items()}
+    else:
+        # Run sequentially if no executor
+        scores = {
+            'moire': check_moire_pattern(face_roi),
+            'refresh': check_screen_refresh(face_roi),
+            'color_temp': check_color_temperature(face_roi),
+            'texture': check_texture_quality(face_roi),
+            'edges': check_edge_artifacts(face_roi),
+            'lighting': check_lighting_consistency(face_roi)
+        }
     
-    # Method 1: Laplacian variance (blurriness/sharpness)
-    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    # Calculate total score
+    total_score = sum(scores.values())
     
-    # Method 2: Texture analysis using Local Binary Patterns
-    # Real skin has more texture variation than photos
-    texture_var = np.var(cv2.Canny(gray, 50, 150))
+    # Determine if spoof (threshold: 6.0 for high confidence)
+    is_spoof = total_score >= 6.0
     
-    # Method 3: Check for screen patterns and refresh artifacts
-    f = np.fft.fft2(gray)
-    fshift = np.fft.fftshift(f)
-    magnitude_spectrum = 20 * np.log(np.abs(fshift) + 1)
-    # Look for periodic patterns typical of screens
-    high_freq_energy = np.sum(magnitude_spectrum[magnitude_spectrum > np.percentile(magnitude_spectrum, 95)])
+    return (is_spoof, total_score, scores)
     
-    # Method 4: Color diversity - screens compress color range
-    hsv_std = np.std(hsv, axis=(0, 1))
-    color_diversity = np.mean(hsv_std)
+def check_parallax_motion(frame, face_location, prev_frame=None, prev_location=None):
+    """Check for parallax effect - 3D objects show differential motion"""
+    if prev_frame is None or prev_location is None:
+        return 0
     
-    # Method 5: Brightness distribution - real faces have natural gradients
-    brightness_std = np.std(gray)
-    brightness_hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
-    brightness_entropy = -np.sum((brightness_hist + 1e-10) * np.log2(brightness_hist + 1e-10))
-    
-    # Method 6: Screen edge detection - phone screens have sharp boundaries
-    edges = cv2.Canny(face_roi, 100, 200)
-    edge_density = np.sum(edges > 0) / edges.size
-    
-    # Scoring system with weighted importance
-    spoof_score = 0
-    confidence_factors = []
-    
-    # Very blurry or unnaturally sharp
-    if laplacian_var < 60:
-        spoof_score += 2.5
-        confidence_factors.append("very_blurry")
-    elif laplacian_var > 2000:
-        spoof_score += 1.5
-        confidence_factors.append("too_sharp")
-    
-    # Lack of natural texture (strong indicator for photos)
-    if texture_var < 500:
-        spoof_score += 2.0
-        confidence_factors.append("low_texture")
-    
-    # Screen patterns detected (strong for phone/monitor)
-    if high_freq_energy > 60000:
-        spoof_score += 2.5
-        confidence_factors.append("screen_pattern")
-    
-    # Limited color diversity (photos/screens)
-    if color_diversity < 25:
-        spoof_score += 1.5
-        confidence_factors.append("flat_color")
-    
-    # Unnatural brightness distribution
-    if brightness_std < 30:
-        spoof_score += 1.5
-        confidence_factors.append("flat_brightness")
-    
-    # Low brightness complexity (printed photos)
-    if brightness_entropy < 5.0:
-        spoof_score += 1.0
-        confidence_factors.append("low_entropy")
-    
-    # High edge density (phone screen borders, photo edges)
-    if edge_density > 0.15:
-        spoof_score += 1.5
-        confidence_factors.append("sharp_edges")
-    
-    # Multi-factor detection: require strong evidence
-    # Phones/screens typically trigger: screen_pattern + flat_color + sharp_edges
-    # Printed photos typically trigger: very_blurry + low_texture + flat_brightness
-    # Real faces with glare: might trigger flat_color but NOT screen_pattern or low_texture
-    
-    # Threshold: Need score >= 5.0 for definite spoof detection
-    # Return both the boolean result and the confidence score
-    is_spoof = spoof_score >= 5.0
-    
-    return (is_spoof, spoof_score)
-    
-def detect_3d_depth(frame, face_location, prev_frame=None, prev_location=None):
-    """
-    Detect if face is 3D (real) or 2D (photo/screen) using depth cues
-    Returns: (is_3d, confidence_score)
-    """
     top, right, bottom, left = face_location
-    # Scale to original size
     top *= 4
     right *= 4
     bottom *= 4
@@ -166,84 +264,127 @@ def detect_3d_depth(frame, face_location, prev_frame=None, prev_location=None):
     
     face_roi = frame[top:bottom, left:right]
     if face_roi.size == 0:
-        return (False, 0.0)
+        return 0
     
+    try:
+        prev_top, prev_right, prev_bottom, prev_left = prev_location
+        prev_top *= 4
+        prev_right *= 4
+        prev_bottom *= 4
+        prev_left *= 4
+        prev_top = max(0, prev_top - 10)
+        prev_bottom = min(h, prev_bottom + 10)
+        prev_left = max(0, prev_left - 10)
+        prev_right = min(w, prev_right + 10)
+        
+        prev_roi = prev_frame[prev_top:prev_bottom, prev_left:prev_right]
+        
+        gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+        prev_gray = cv2.cvtColor(prev_roi, cv2.COLOR_BGR2GRAY)
+        
+        if prev_gray.shape == gray.shape:
+            # Calculate optical flow
+            flow = cv2.calcOpticalFlowFarneback(prev_gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+            flow_magnitude = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
+            flow_variance = np.var(flow_magnitude)
+            
+            # 3D faces show high variance (parallax)
+            # 2D images move uniformly
+            if flow_variance > 1.0:
+                return 3.0
+            elif flow_variance > 0.5:
+                return 2.0
+            elif flow_variance > 0.2:
+                return 1.0
+    except:
+        pass
+    
+    return 0
+
+def check_depth_gradients(face_roi):
+    """Check for 3D depth cues in lighting gradients"""
     gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
-    depth_score = 0
     
-    # Method 1: Lighting gradient analysis (3D faces have depth-based shadows)
-    # Calculate horizontal and vertical gradients
+    # 3D faces have complex lighting from depth
     sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
     sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
     gradient_magnitude = np.sqrt(sobelx**2 + sobely**2)
     gradient_complexity = np.std(gradient_magnitude)
     
-    # Real 3D faces have complex gradient patterns (nose, cheeks, etc.)
-    if gradient_complexity > 15:
-        depth_score += 2.0
+    score = 0
+    if gradient_complexity > 20:
+        score = 2.5
+    elif gradient_complexity > 15:
+        score = 1.5
     
-    # Method 2: Nose bridge detection (center should be brighter/more prominent)
+    return score
+
+def check_face_depth_structure(face_roi):
+    """Check for 3D facial structure (nose, cheeks, etc.)"""
+    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+    
+    # Nose bridge should be prominent in center
     roi_height, roi_width = gray.shape
     center_region = gray[roi_height//4:3*roi_height//4, 2*roi_width//5:3*roi_width//5]
     edge_regions = [
-        gray[roi_height//4:3*roi_height//4, 0:roi_width//5],  # left
-        gray[roi_height//4:3*roi_height//4, 4*roi_width//5:roi_width]  # right
+        gray[roi_height//4:3*roi_height//4, 0:roi_width//5],
+        gray[roi_height//4:3*roi_height//4, 4*roi_width//5:roi_width]
     ]
     
+    score = 0
     if center_region.size > 0:
         center_intensity = np.mean(center_region)
         edge_intensity = np.mean([np.mean(r) for r in edge_regions if r.size > 0])
         
-        # 3D faces: center (nose area) typically different from edges
-        if abs(center_intensity - edge_intensity) > 10:
-            depth_score += 1.5
+        if abs(center_intensity - edge_intensity) > 15:
+            score = 2.0
+        elif abs(center_intensity - edge_intensity) > 10:
+            score = 1.0
     
-    # Method 3: Optical flow (if previous frame available)
-    if prev_frame is not None and prev_location is not None:
-        try:
-            prev_top, prev_right, prev_bottom, prev_left = prev_location
-            prev_top *= 4
-            prev_right *= 4
-            prev_bottom *= 4
-            prev_left *= 4
-            prev_top = max(0, prev_top - 10)
-            prev_bottom = min(h, prev_bottom + 10)
-            prev_left = max(0, prev_left - 10)
-            prev_right = min(w, prev_right + 10)
-            
-            prev_roi = prev_frame[prev_top:prev_bottom, prev_left:prev_right]
-            prev_gray = cv2.cvtColor(prev_roi, cv2.COLOR_BGR2GRAY)
-            
-            # Resize to match if needed
-            if prev_gray.shape == gray.shape:
-                # Calculate optical flow
-                flow = cv2.calcOpticalFlowFarneback(prev_gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
-                
-                # 3D faces show differential motion (parallax effect)
-                # Different parts move at different rates due to depth
-                flow_magnitude = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
-                flow_variance = np.var(flow_magnitude)
-                
-                # High variance = different depths moving differently
-                if flow_variance > 0.5:
-                    depth_score += 2.0
-        except:
-            pass
+    return score
+
+def detect_3d_depth(frame, face_location, prev_frame=None, prev_location=None, executor=None):
+    """
+    Detect if face is 3D (real) or 2D (photo/screen) using depth cues
+    Returns: (is_3d, confidence_score, scores_dict)
+    """
+    top, right, bottom, left = face_location
+    top *= 4
+    right *= 4
+    bottom *= 4
+    left *= 4
     
-    # Method 4: Contour depth analysis
-    # Use bilateral filter to preserve edges while smoothing
-    bilateral = cv2.bilateralFilter(gray, 9, 75, 75)
-    edges = cv2.Canny(bilateral, 30, 100)
+    h, w = frame.shape[:2]
+    top = max(0, top - 10)
+    bottom = min(h, bottom + 10)
+    left = max(0, left - 10)
+    right = min(w, right + 10)
     
-    # Analyze edge distribution - 3D faces have structured edges (nose, jawline, etc.)
-    contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    if len(contours) > 5:  # Multiple distinct contours suggest 3D structure
-        depth_score += 1.0
+    face_roi = frame[top:bottom, left:right]
+    if face_roi.size == 0:
+        return (False, 0.0, {})
     
-    # Threshold: score >= 4.0 indicates 3D face
-    is_3d = depth_score >= 3.5
+    # Run checks in parallel if executor provided
+    if executor is not None:
+        futures = {
+            'parallax': executor.submit(check_parallax_motion, frame, face_location, prev_frame, prev_location),
+            'gradients': executor.submit(check_depth_gradients, face_roi),
+            'structure': executor.submit(check_face_depth_structure, face_roi)
+        }
+        scores = {name: future.result() for name, future in futures.items()}
+    else:
+        scores = {
+            'parallax': check_parallax_motion(frame, face_location, prev_frame, prev_location),
+            'gradients': check_depth_gradients(face_roi),
+            'structure': check_face_depth_structure(face_roi)
+        }
     
-    return (is_3d, depth_score)
+    total_score = sum(scores.values())
+    
+    # Stricter threshold: need 4.0+ to be considered 3D
+    is_3d = total_score >= 4.0
+    
+    return (is_3d, total_score, scores)
 
 class FaceRecognition:
         face_locations = []
@@ -400,7 +541,8 @@ class FaceRecognition:
                 'state': None,
                 'name': None,
                 'confidence': None,
-                'is_live': False
+                'is_live': False,
+                'debug': {}  # For debugging detection scores
             }
             
             face_key = f"face_{idx}"
@@ -409,38 +551,47 @@ class FaceRecognition:
             prev_frame = self.prev_frame
             prev_location = self.prev_locations.get(face_key)
             
-            # 3D Depth detection (primary check)
-            is_3d, depth_confidence = detect_3d_depth(frame, face_location, prev_frame, prev_location)
+            # Run all detection checks in parallel using thread pool
+            is_3d, depth_score, depth_details = detect_3d_depth(
+                frame, face_location, prev_frame, prev_location, executor=self.executor
+            )
             
-            # Photo detection with confidence score (secondary check)
-            is_photo, spoof_confidence = detect_photo_spoof(frame, face_location)
+            is_spoof, spoof_score, spoof_details = detect_photo_spoof(
+                frame, face_location, executor=self.executor
+            )
             
-            # Combined decision logic - balanced approach
-            # Very high photo confidence always rejects
-            if spoof_confidence >= 7.0:
+            # Store debug info
+            result['debug'] = {
+                'spoof_score': spoof_score,
+                'depth_score': depth_score,
+                'spoof_details': spoof_details,
+                'depth_details': depth_details
+            }
+            
+            # BALANCED DECISION LOGIC:
+            # Spoof detected with very high confidence -> REJECT
+            if spoof_score >= 7.0:
                 result['state'] = 'spoof'
-                result['name'] = "PHOTO/SCREEN DETECTED!"
-                self.trigger_alert('spoof', f"Spoofing attempt detected (confidence: {spoof_confidence:.1f})", result)
+                result['name'] = f"SCREEN/PHOTO! (s:{spoof_score:.1f})"
+                self.trigger_alert('spoof', f"Spoofing detected - score: {spoof_score:.1f}", result)
                 return result, result['name']
             
-            # Photo detection triggered (>=5.0) - check depth for confirmation
-            if is_photo:
-                if not is_3d or depth_confidence < 4.0:
-                    # Photo detected AND (not 3D OR weak 3D confidence)
-                    result['state'] = 'spoof'
-                    result['name'] = "PHOTO/SCREEN DETECTED!"
-                    self.trigger_alert('spoof', f"Photo/screen spoofing detected", result)
-                    return result, result['name']
-                # else: Photo detected BUT strong 3D evidence - likely false positive, continue
-            
-            # Medium-high spoof score (4.0-5.0) with weak 3D evidence
-            if spoof_confidence >= 4.0 and depth_confidence < 3.0:
+            # High spoof score AND no strong 3D evidence -> REJECT
+            if spoof_score >= 5.5 and depth_score < 4.0:
                 result['state'] = 'spoof'
-                result['name'] = "PHOTO/SCREEN DETECTED!"
+                result['name'] = f"LIKELY SPOOF (s:{spoof_score:.1f}/d:{depth_score:.1f})"
+                self.trigger_alert('spoof', f"Likely spoofing - spoof:{spoof_score:.1f}, depth:{depth_score:.1f}", result)
+                return result, result['name']
+            
+            # Medium spoof indicators AND weak 3D -> REJECT
+            if spoof_score >= 4.0 and depth_score < 3.0:
+                result['state'] = 'spoof'
+                result['name'] = f"POSSIBLE SPOOF (s:{spoof_score:.1f}/d:{depth_score:.1f})"
                 self.trigger_alert('spoof', f"Possible spoofing detected", result)
                 return result, result['name']
             
-            # Motion-based liveness - now even more lenient since we have depth detection
+            # If we get here, spoof checks passed or are inconclusive
+            # Check motion-based liveness with stricter requirements
             has_motion = False
             
             with self.lock:
@@ -462,34 +613,34 @@ class FaceRecognition:
                 frames_seen = self.liveness_check[face_key]['frames']
                 motion_frames = self.liveness_check[face_key]['motion_frames']
                 
-                # More lenient motion requirements with depth detection
-                # If 3D detected, require minimal motion
-                # If depth uncertain, require more motion evidence
+                # Stricter motion requirements for security
+                # Strong 3D evidence -> lenient motion requirement
+                # Weak/no 3D evidence -> strict motion requirement
                 
-                if is_3d:
-                    # Clearly 3D - very lenient
-                    is_live = frames_seen < 20 or motion_frames > 0
-                elif depth_confidence > 2.5:
-                    # Moderately confident 3D - some motion preferred
+                if is_3d and depth_score >= 5.0:
+                    # Very strong 3D evidence - minimal motion needed
+                    is_live = frames_seen < 30 or motion_frames > 0
+                elif is_3d or depth_score >= 3.0:
+                    # Some 3D evidence - moderate motion needed
+                    if frames_seen < 45:
+                        is_live = True
+                    else:
+                        motion_ratio = motion_frames / frames_seen
+                        is_live = motion_ratio > 0.05  # 5% motion
+                else:
+                    # Weak 3D evidence - strict motion requirement
                     if frames_seen < 40:
                         is_live = True
                     else:
                         motion_ratio = motion_frames / frames_seen
-                        is_live = motion_ratio > 0.03  # Only 3% motion needed
-                else:
-                    # Low 3D confidence - require more motion
-                    if frames_seen < 60:
-                        is_live = True
-                    else:
-                        motion_ratio = motion_frames / frames_seen
-                        is_live = motion_ratio > 0.08  # 8% motion needed
+                        is_live = motion_ratio > 0.10  # 10% motion needed
             
             result['is_live'] = is_live
             
             # Determine what to display
             if not is_live:
                 result['state'] = 'pending_verification'
-                result['name'] = "Slight movement needed"
+                result['name'] = f"Move slightly (d:{depth_score:.1f})"
             elif len(self.known_face_encodings) > 0:
                 matches = face_recognition.compare_faces(self.known_face_encodings, face_encoding)
                 face_distances = face_recognition.face_distance(self.known_face_encodings, face_encoding)

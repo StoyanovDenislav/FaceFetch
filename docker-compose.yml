@@ -1,0 +1,21 @@
+services:
+  facial-recognition:
+    build: .
+    container_name: facial_recognition_app
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount faces directory to persist known faces
+      - ./faces:/app/faces
+      # Mount templates for live editing
+      - ./templates:/app/templates
+    devices:
+      # Grant access to webcam/camera devices
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+    privileged: true
+    environment:
+      - DISPLAY=${DISPLAY}
+      - PYTHONUNBUFFERED=1
+    network_mode: "host"
+    restart: unless-stopped
