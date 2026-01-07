@@ -12,6 +12,8 @@ from flask import Flask, render_template, Response, jsonify, request, abort
 from threading import Thread, Lock
 from functools import wraps
 import socket
+from pathlib import Path
+from dotenv import load_dotenv, set_key, find_dotenv
 
 # Try to import Raspberry Pi camera support
 try:
@@ -19,6 +21,25 @@ try:
     RASPBERRY_PI = True
 except ImportError:
     RASPBERRY_PI = False
+
+
+def generate_and_save_token(env_path='.env'):
+    """Generate a new token and save it to .env file"""
+    token = secrets.token_urlsafe(32)
+    env_file = Path(env_path)
+    
+    # Create .env if it doesn't exist
+    if not env_file.exists():
+        with open(env_file, 'w') as f:
+            f.write('# Camera Streamer Configuration\n')
+            f.write(f'CAMERA_STREAM_TOKEN={token}\n')
+            f.write('CAMERA_STREAM_AUTH=true\n')
+    else:
+        # Update existing .env
+        set_key(env_path, 'CAMERA_STREAM_TOKEN', token)
+    
+    print(f"✓ Generated new token and saved to {env_path}")
+    return token
 
 
 class CameraStream:
@@ -190,9 +211,36 @@ class CameraDiscovery:
 app = Flask(__name__)
 camera_streams = {}
 
+# Load .env file
+load_dotenv()
+
 # Security configuration
-ACCESS_TOKEN = os.environ.get('CAMERA_STREAM_TOKEN', secrets.token_urlsafe(32))
-REQUIRE_AUTH = os.environ.get('CAMERA_STREAM_AUTH', 'true').lower() == 'true'
+# If token doesn't exist in env, generate and save a new one
+if not os.getenv('CAMERA_STREAM_TOKEN'):
+    ACCESS_TOKEN = generate_and_save_token('.env')
+    # Reload to get the new token
+    load_dotenv(override=True)
+else:
+    ACCESS_TOKEN = os.getenv('CAMERA_STREAM_TOKEN')
+
+REQUIRE_AUTH = os.getenv('CAMERA_STREAM_AUTH', 'true').lower() == 'true'
+
+# URL configuration
+CUSTOM_URL = os.getenv('CAMERA_STREAM_URL', '').strip()
+FORCE_CUSTOM_URL = os.getenv('CAMERA_STREAM_FORCE_URL', 'false').lower() == 'true'
+
+
+def get_base_url():
+    """Get the base URL for camera streams"""
+    if FORCE_CUSTOM_URL and CUSTOM_URL:
+        return CUSTOM_URL.rstrip('/')
+    elif CUSTOM_URL and not FORCE_CUSTOM_URL:
+        # Custom URL provided but not forced, use it as fallback
+        return CUSTOM_URL.rstrip('/')
+    else:
+        # Auto-detect local IP
+        local_ip = get_local_ip()
+        return f"http://{local_ip}:8080"
 
 
 def require_token(f):
@@ -221,22 +269,22 @@ def require_token(f):
 def index():
     """List available camera streams"""
     cameras = []
-    local_ip = get_local_ip()
+    base_url = get_base_url()
     
     for cam_id, stream in camera_streams.items():
         if REQUIRE_AUTH:
             cameras.append({
                 'id': cam_id,
                 'type': stream.camera_type,
-                'stream_url': f"http://{local_ip}:8080/camera/{cam_id}/stream?token={ACCESS_TOKEN}",
-                'snapshot_url': f"http://{local_ip}:8080/camera/{cam_id}/snapshot?token={ACCESS_TOKEN}"
+                'stream_url': f"{base_url}/camera/{cam_id}/stream?token={ACCESS_TOKEN}",
+                'snapshot_url': f"{base_url}/camera/{cam_id}/snapshot?token={ACCESS_TOKEN}"
             })
         else:
             cameras.append({
                 'id': cam_id,
                 'type': stream.camera_type,
-                'stream_url': f"http://{local_ip}:8080/camera/{cam_id}/stream",
-                'snapshot_url': f"http://{local_ip}:8080/camera/{cam_id}/snapshot"
+                'stream_url': f"{base_url}/camera/{cam_id}/stream",
+                'snapshot_url': f"{base_url}/camera/{cam_id}/snapshot"
             })
     
     return jsonify({
@@ -316,13 +364,24 @@ def main():
         sys.exit(1)
     
     # Display access information
+    base_url = get_base_url()
     local_ip = get_local_ip()
+    
     print("\n" + "="*60)
     print("Camera Streamer is running!")
     print("="*60)
     print(f"\nLocal IP: {local_ip}")
     print(f"Port: 8080")
     print(f"Authentication: {'ENABLED' if REQUIRE_AUTH else 'DISABLED'}")
+    
+    if FORCE_CUSTOM_URL and CUSTOM_URL:
+        print(f"URL Mode: FORCED CUSTOM URL")
+        print(f"Custom URL: {CUSTOM_URL}")
+    elif CUSTOM_URL:
+        print(f"URL Mode: Custom URL (fallback)")
+        print(f"Custom URL: {CUSTOM_URL}")
+    else:
+        print(f"URL Mode: Auto-detect")
     
     if REQUIRE_AUTH:
         print(f"\n⚠️  SECURITY TOKEN (keep this secret!):")
@@ -336,24 +395,30 @@ def main():
     for cam_id in camera_streams:
         print(f"\n  Camera: {cam_id}")
         if REQUIRE_AUTH:
-            print(f"    Stream:   http://{local_ip}:8080/camera/{cam_id}/stream?token={ACCESS_TOKEN}")
-            print(f"    Snapshot: http://{local_ip}:8080/camera/{cam_id}/snapshot?token={ACCESS_TOKEN}")
+            print(f"    Stream:   {base_url}/camera/{cam_id}/stream?token={ACCESS_TOKEN}")
+            print(f"    Snapshot: {base_url}/camera/{cam_id}/snapshot?token={ACCESS_TOKEN}")
         else:
-            print(f"    Stream:   http://{local_ip}:8080/camera/{cam_id}/stream")
-            print(f"    Snapshot: http://{local_ip}:8080/camera/{cam_id}/snapshot")
+            print(f"    Stream:   {base_url}/camera/{cam_id}/stream")
+            print(f"    Snapshot: {base_url}/camera/{cam_id}/snapshot")
     
     print(f"\nAPI Endpoint:")
     if REQUIRE_AUTH:
-        print(f"  http://{local_ip}:8080/?token={ACCESS_TOKEN} - List all cameras (JSON)")
+        print(f"  {base_url}/?token={ACCESS_TOKEN} - List all cameras (JSON)")
     else:
-        print(f"  http://{local_ip}:8080/ - List all cameras (JSON)")
+        print(f"  {base_url}/ - List all cameras (JSON)")
     
     if REQUIRE_AUTH:
         print(f"\nFor Docker containers:")
         print(f"  Set CAMERA_STREAM_TOKEN environment variable")
-        print(f"  Stream URL: http://host.docker.internal:8080/camera/{list(camera_streams.keys())[0]}/stream?token={ACCESS_TOKEN}")
+        if FORCE_CUSTOM_URL and CUSTOM_URL:
+            print(f"  Stream URL: {base_url}/camera/{list(camera_streams.keys())[0]}/stream?token={ACCESS_TOKEN}")
+        else:
+            print(f"  Stream URL: http://host.docker.internal:8080/camera/{list(camera_streams.keys())[0]}/stream?token={ACCESS_TOKEN}")
     else:
-        print(f"\nFor Docker containers, use: http://host.docker.internal:8080")
+        if FORCE_CUSTOM_URL and CUSTOM_URL:
+            print(f"\nFor Docker containers, use: {base_url}")
+        else:
+            print(f"\nFor Docker containers, use: http://host.docker.internal:8080")
     
     print(f"\n⚠️  To disable authentication (NOT RECOMMENDED):")
     print(f"  Set environment variable: CAMERA_STREAM_AUTH=false")
