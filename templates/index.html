@@ -275,9 +275,219 @@
         margin-top: 10px;
         font-size: 0.9em;
       }
+
+      .alert-panel {
+        background: white;
+        border-radius: 15px;
+        padding: 20px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        margin-bottom: 20px;
+      }
+
+      .alert-panel h2 {
+        color: #dc3545;
+        margin-bottom: 20px;
+        border-bottom: 3px solid #dc3545;
+        padding-bottom: 10px;
+      }
+
+      .alert-item {
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+        padding: 15px;
+        margin-bottom: 10px;
+        border-radius: 8px;
+        position: relative;
+      }
+
+      .alert-item.spoof {
+        background: #f8d7da;
+        border-left-color: #dc3545;
+      }
+
+      .alert-item.unknown {
+        background: #fff3cd;
+        border-left-color: #ffc107;
+      }
+
+      .alert-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+
+      .alert-type {
+        font-weight: bold;
+        text-transform: uppercase;
+        font-size: 0.9em;
+      }
+
+      .alert-time {
+        font-size: 0.85em;
+        color: #666;
+      }
+
+      .alert-message {
+        color: #333;
+        margin-bottom: 8px;
+      }
+
+      .alert-dismiss {
+        background: #6c757d;
+        color: white;
+        border: none;
+        padding: 5px 12px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 0.85em;
+      }
+
+      .alert-dismiss:hover {
+        background: #5a6268;
+      }
+
+      .alarm-banner {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: #dc3545;
+        color: white;
+        padding: 15px;
+        text-align: center;
+        font-size: 1.2em;
+        font-weight: bold;
+        z-index: 1000;
+        display: none;
+        animation: pulse 1s infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+      }
+
+      .alarm-dismiss {
+        background: white;
+        color: #dc3545;
+        border: none;
+        padding: 8px 20px;
+        margin-left: 20px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-weight: bold;
+      }
+
+      .alarm-dismiss:hover {
+        background: #f8f9fa;
+      }
+
+      .audio-notice {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #ffc107;
+        color: #333;
+        padding: 15px 20px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        font-weight: bold;
+        z-index: 999;
+        display: none;
+      }
     </style>
   </head>
   <body>
+    <!-- Alarm Banner -->
+    <div id="alarmBanner" class="alarm-banner">
+      🚨 SECURITY ALERT: Unauthorized Access Detected! 🚨
+      <button class="alarm-dismiss" onclick="dismissAlarm()">Dismiss</button>
+    </div>
+
+    <!-- Audio Notice -->
+    <div id="audioNotice" class="audio-notice">
+      🔊 Click anywhere to enable alarm sounds
+    </div>
+
+    <!-- Alarm Sound (hidden audio element) -->
+    <audio id="alarmSound" loop>
+      <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBjGN1fPKdSYFKHzM8NiTRQoSZLjr65lOEAtPpeL0s2QdBjiP1fLNfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQg==" type="audio/wav">
+    </audio>    
+    <!-- Nuclear EAS Alarm Generator -->
+    <script>
+      // Create dramatic EAS-style alarm using Web Audio API
+      let audioContext;
+      let oscillator1, oscillator2, oscillator3;
+      let gainNode;
+      let isAlarmPlaying = false;
+
+      function createEASAlarm() {
+        if (!audioContext) {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Stop any existing alarm
+        stopEASAlarm();
+        
+        // Create three oscillators for that classic EAS sound
+        oscillator1 = audioContext.createOscillator();
+        oscillator2 = audioContext.createOscillator();
+        oscillator3 = audioContext.createOscillator();
+        
+        // Create gain node for volume control
+        gainNode = audioContext.createGain();
+        
+        // Classic EAS frequencies (853Hz and 960Hz alternating)
+        oscillator1.frequency.value = 853;
+        oscillator2.frequency.value = 960;
+        oscillator3.frequency.value = 1050;
+        
+        // Square wave for that harsh EAS sound
+        oscillator1.type = 'square';
+        oscillator2.type = 'square';
+        oscillator3.type = 'square';
+        
+        // Set volume
+        gainNode.gain.value = 0.3;
+        
+        // Connect oscillators to gain, then to output
+        oscillator1.connect(gainNode);
+        oscillator2.connect(gainNode);
+        oscillator3.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        // Start oscillators
+        oscillator1.start();
+        oscillator2.start();
+        oscillator3.start();
+        
+        // Create pulsing effect
+        let startTime = audioContext.currentTime;
+        for (let i = 0; i < 100; i++) {
+          gainNode.gain.setValueAtTime(0.3, startTime + i * 0.5);
+          gainNode.gain.setValueAtTime(0.0, startTime + i * 0.5 + 0.25);
+        }
+        
+        isAlarmPlaying = true;
+      }
+      
+      function stopEASAlarm() {
+        if (oscillator1) {
+          try { oscillator1.stop(); } catch(e) {}
+          oscillator1 = null;
+        }
+        if (oscillator2) {
+          try { oscillator2.stop(); } catch(e) {}
+          oscillator2 = null;
+        }
+        if (oscillator3) {
+          try { oscillator3.stop(); } catch(e) {}
+          oscillator3 = null;
+        }
+        isAlarmPlaying = false;
+      }
+    </script>
     <div class="container">
       <header>
         <h1>🔒 Facial Recognition System</h1>
@@ -349,6 +559,30 @@
         </div>
       </div>
 
+      <!-- Security Alerts Panel -->
+      <div class="alert-panel">
+        <h2>
+          🚨 Security Alerts
+          <button
+            id="clearAlerts"
+            style="
+              float: right;
+              padding: 5px 15px;
+              background: #dc3545;
+              color: white;
+              border: none;
+              border-radius: 5px;
+              cursor: pointer;
+            "
+          >
+            Clear All
+          </button>
+        </h2>
+        <div id="alertsContainer">
+          <div class="no-faces">No alerts</div>
+        </div>
+      </div>
+
       <div class="api-info">
         <h2>🔌 API Endpoints</h2>
         <p>Access detection data programmatically:</p>
@@ -387,6 +621,158 @@ Loading...</pre
 
     <script>
       let lastTimestamp = 0;
+      let alarmSound = document.getElementById('alarmSound');
+      let alarmBanner = document.getElementById('alarmBanner');
+      let alarmActive = false;
+      let lastAlertCount = 0;
+      let audioEnabled = false;
+      let unknownDetectionStart = null; // Track when unknown first detected
+      let lastAlarmTime = 0; // Track last time alarm was triggered
+      const ALARM_COOLDOWN = 30000; // 30 seconds between alarms
+      const DETECTION_DELAY = 2500; // 2.5 seconds before triggering alarm
+
+      // Enable audio on first user interaction
+      document.addEventListener('click', function enableAudio() {
+        audioEnabled = true;
+        document.getElementById('audioNotice').style.display = 'none';
+        document.removeEventListener('click', enableAudio);
+        console.log('Audio enabled');
+      }, { once: true });
+
+      // Show audio notice initially
+      setTimeout(() => {
+        if (!audioEnabled) {
+          document.getElementById('audioNotice').style.display = 'block';
+        }
+      }, 2000);
+
+      function triggerAlarm() {
+        const currentTime = Date.now();
+        
+        // Check cooldown period
+        if (currentTime - lastAlarmTime < ALARM_COOLDOWN) {
+          console.log('Alarm in cooldown period');
+          return;
+        }
+        
+        console.log('Triggering alarm!');
+        if (!alarmActive) {
+          alarmActive = true;
+          lastAlarmTime = currentTime;
+          alarmBanner.style.display = 'block';
+          
+          if (audioEnabled) {
+            // Use Web Audio API for EAS alarm
+            createEASAlarm();
+          } else {
+            console.log('Audio not enabled yet - click anywhere to enable');
+          }
+          
+          // Auto-dismiss after 15 seconds
+          setTimeout(() => {
+            stopAlarm();
+          }, 15000);
+        }
+      }
+
+      function dismissAlarm() {
+        stopAlarm();
+      }
+
+      function stopAlarm() {
+        console.log('Stopping alarm');
+        alarmActive = false;
+        alarmBanner.style.display = 'none';
+        stopEASAlarm(); // Stop the EAS alarm
+        alarmSound.pause();
+        alarmSound.currentTime = 0;
+      }
+
+      async function updateAlerts() {
+        try {
+          const response = await fetch("/api/alerts?unacknowledged=true");
+          const data = await response.json();
+          
+          console.log('Alerts data:', data);
+
+          const container = document.getElementById("alertsContainer");
+          const currentTime = Date.now();
+
+          if (data.total_alerts === 0) {
+            container.innerHTML = '<div class="no-faces">No alerts</div>';
+            unknownDetectionStart = null; // Reset detection timer
+            if (alarmActive && lastAlertCount > 0) {
+              stopAlarm();
+            }
+          } else {
+            // Check if we have new alerts
+            if (data.total_alerts > lastAlertCount) {
+              // Start detection timer if not already started
+              if (unknownDetectionStart === null) {
+                unknownDetectionStart = currentTime;
+                console.log('Unknown/spoof detected, starting timer...');
+              }
+              
+              // Check if sustained for required duration
+              const detectionDuration = currentTime - unknownDetectionStart;
+              if (detectionDuration >= DETECTION_DELAY) {
+                console.log('Sustained detection for', detectionDuration, 'ms - triggering alarm');
+                triggerAlarm();
+                unknownDetectionStart = null; // Reset after triggering
+              } else {
+                console.log('Detection duration:', detectionDuration, 'ms (need', DETECTION_DELAY, 'ms)');
+              }
+            }
+            lastAlertCount = data.total_alerts;
+
+            container.innerHTML = "";
+
+            data.alerts.forEach((alert, index) => {
+              const alertItem = document.createElement("div");
+              alertItem.className = `alert-item ${alert.type}`;
+
+              const date = new Date(alert.timestamp * 1000);
+              const timeString = date.toLocaleTimeString();
+
+              alertItem.innerHTML = `
+                <div class="alert-header">
+                  <span class="alert-type">${alert.type === 'spoof' ? '🚫 SPOOF DETECTED' : '⚠️ UNKNOWN PERSON'}</span>
+                  <span class="alert-time">${timeString}</span>
+                </div>
+                <div class="alert-message">${alert.message}</div>
+                <button class="alert-dismiss" onclick="acknowledgeAlert(${index})">Dismiss</button>
+              `;
+
+              container.appendChild(alertItem);
+            });
+          }
+        } catch (error) {
+          console.error("Error fetching alerts:", error);
+        }
+      }
+
+      async function acknowledgeAlert(index) {
+        try {
+          await fetch(`/api/alerts/${index}/acknowledge`, { method: 'POST' });
+          updateAlerts();
+        } catch (error) {
+          console.error("Error acknowledging alert:", error);
+        }
+      }
+
+      async function clearAllAlerts() {
+        try {
+          await fetch("/api/alerts/clear", { method: 'POST' });
+          stopAlarm();
+          lastAlertCount = 0;
+          updateAlerts();
+        } catch (error) {
+          console.error("Error clearing alerts:", error);
+        }
+      }
+
+      // Clear alerts button
+      document.getElementById("clearAlerts").addEventListener("click", clearAllAlerts);
 
       async function updateDetections() {
         try {
@@ -540,6 +926,9 @@ Loading...</pre
       // Update detections every second
       setInterval(updateDetections, 1000);
 
+      // Update alerts every 1 second (frequent for security)
+      setInterval(updateAlerts, 1000);
+
       // Update history every 2 seconds
       setInterval(updateHistory, 2000);
 
@@ -550,6 +939,7 @@ Loading...</pre
       updateDetections();
       updateSystemStatus();
       updateHistory();
+      updateAlerts();
     </script>
   </body>
 </html>

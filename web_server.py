@@ -3,7 +3,7 @@ Flask Web Server for Facial Recognition with Live Feed
 Supports both regular webcam and Raspberry Pi camera
 Uses the FaceRecognition class from facial_recognition_fixed.py
 """
-from flask import Flask, render_template, Response, jsonify
+from flask import Flask, render_template, Response, jsonify, request
 import cv2
 import sys
 import time
@@ -153,12 +153,41 @@ def get_status():
         'faces_loaded': face_recognition.known_face_names
     })
 
+@app.route('/api/alerts')
+def get_alerts():
+    """API endpoint for security alerts"""
+    unacknowledged_only = request.args.get('unacknowledged', 'false').lower() == 'true'
+    alerts = face_recognition.get_alerts(unacknowledged_only=unacknowledged_only)
+    return jsonify({
+        'total_alerts': len(alerts),
+        'alerts': alerts
+    })
+
+@app.route('/api/alerts/<int:alert_id>/acknowledge', methods=['POST'])
+def acknowledge_alert(alert_id):
+    """Acknowledge a specific alert"""
+    face_recognition.acknowledge_alert(alert_id)
+    return jsonify({'status': 'success', 'message': f'Alert {alert_id} acknowledged'})
+
+@app.route('/api/alerts/clear', methods=['POST'])
+def clear_alerts():
+    """Clear all alerts"""
+    face_recognition.clear_alerts()
+    return jsonify({'status': 'success', 'message': 'All alerts cleared'})
+
 if __name__ == '__main__':
+    import os
+    
     # Check if we should use Pi camera
     use_pi = '--pi' in sys.argv or (RASPBERRY_PI and '--no-pi' not in sys.argv)
     
-    # Initialize FaceRecognition instance
-    face_recognition = FaceRecognition(known_faces_dir='faces')
+    # Get number of CPU cores for optimal thread count
+    cpu_count = os.cpu_count() or 4
+    # Use half of available cores for face processing, min 2, max 8
+    max_workers = max(2, min(8, cpu_count // 2))
+    
+    # Initialize FaceRecognition instance with multithreading
+    face_recognition = FaceRecognition(known_faces_dir='faces', max_workers=max_workers)
     
     # Initialize camera with FaceRecognition instance
     camera = WebCamera(face_recognition, use_pi_camera=use_pi)
@@ -166,6 +195,7 @@ if __name__ == '__main__':
     print("\n" + "="*50)
     print("Facial Recognition Web Server")
     print("="*50)
+    print(f"CPU Cores: {cpu_count} (using {max_workers} worker threads)")
     print(f"Camera: {'Raspberry Pi Camera' if camera.use_pi_camera else 'USB/Webcam'}")
     print(f"Known faces loaded: {len(face_recognition.known_face_names)}")
     print(f"Faces: {face_recognition.known_face_names}")
@@ -178,4 +208,8 @@ if __name__ == '__main__':
     print("\nPress Ctrl+C to stop")
     print("="*50 + "\n")
     
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    finally:
+        face_recognition.cleanup()
+        print("Cleaned up resources")
