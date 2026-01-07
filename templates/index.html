@@ -364,8 +364,13 @@
       }
 
       @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.7; }
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.7;
+        }
       }
 
       .alarm-dismiss {
@@ -391,7 +396,7 @@
         color: #333;
         padding: 15px 20px;
         border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
         font-weight: bold;
         z-index: 999;
         display: none;
@@ -412,8 +417,11 @@
 
     <!-- Alarm Sound (hidden audio element) -->
     <audio id="alarmSound" loop>
-      <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBjGN1fPKdSYFKHzM8NiTRQoSZLjr65lOEAtPpeL0s2QdBjiP1fLNfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQg==" type="audio/wav">
-    </audio>    
+      <source
+        src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBjGN1fPKdSYFKHzM8NiTRQoSZLjr65lOEAtPpeL0s2QdBjiP1fLNfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQgoTXrTp7KlXFApGnt/yvmsiBy+K0/LJfC0GJHnJ8NySQg=="
+        type="audio/wav"
+      />
+    </audio>
     <!-- Nuclear EAS Alarm Generator -->
     <script>
       // Create dramatic EAS-style alarm using Web Audio API
@@ -424,65 +432,72 @@
 
       function createEASAlarm() {
         if (!audioContext) {
-          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          audioContext = new (window.AudioContext ||
+            window.webkitAudioContext)();
         }
-        
+
         // Stop any existing alarm
         stopEASAlarm();
-        
+
         // Create three oscillators for that classic EAS sound
         oscillator1 = audioContext.createOscillator();
         oscillator2 = audioContext.createOscillator();
         oscillator3 = audioContext.createOscillator();
-        
+
         // Create gain node for volume control
         gainNode = audioContext.createGain();
-        
+
         // Classic EAS frequencies (853Hz and 960Hz alternating)
         oscillator1.frequency.value = 853;
         oscillator2.frequency.value = 960;
         oscillator3.frequency.value = 1050;
-        
+
         // Square wave for that harsh EAS sound
-        oscillator1.type = 'square';
-        oscillator2.type = 'square';
-        oscillator3.type = 'square';
-        
+        oscillator1.type = "square";
+        oscillator2.type = "square";
+        oscillator3.type = "square";
+
         // Set volume
         gainNode.gain.value = 0.3;
-        
+
         // Connect oscillators to gain, then to output
         oscillator1.connect(gainNode);
         oscillator2.connect(gainNode);
         oscillator3.connect(gainNode);
         gainNode.connect(audioContext.destination);
-        
+
         // Start oscillators
         oscillator1.start();
         oscillator2.start();
         oscillator3.start();
-        
+
         // Create pulsing effect
         let startTime = audioContext.currentTime;
         for (let i = 0; i < 100; i++) {
           gainNode.gain.setValueAtTime(0.3, startTime + i * 0.5);
           gainNode.gain.setValueAtTime(0.0, startTime + i * 0.5 + 0.25);
         }
-        
+
         isAlarmPlaying = true;
       }
-      
+
       function stopEASAlarm() {
         if (oscillator1) {
-          try { oscillator1.stop(); } catch(e) {}
+          try {
+            oscillator1.stop();
+          } catch (e) {}
           oscillator1 = null;
         }
         if (oscillator2) {
-          try { oscillator2.stop(); } catch(e) {}
+          try {
+            oscillator2.stop();
+          } catch (e) {}
           oscillator2 = null;
         }
         if (oscillator3) {
-          try { oscillator3.stop(); } catch(e) {}
+          try {
+            oscillator3.stop();
+          } catch (e) {}
           oscillator3 = null;
         }
         isAlarmPlaying = false;
@@ -621,8 +636,8 @@ Loading...</pre
 
     <script>
       let lastTimestamp = 0;
-      let alarmSound = document.getElementById('alarmSound');
-      let alarmBanner = document.getElementById('alarmBanner');
+      let alarmSound = document.getElementById("alarmSound");
+      let alarmBanner = document.getElementById("alarmBanner");
       let alarmActive = false;
       let lastAlertCount = 0;
       let audioEnabled = false;
@@ -632,42 +647,46 @@ Loading...</pre
       const DETECTION_DELAY = 2500; // 2.5 seconds before triggering alarm
 
       // Enable audio on first user interaction
-      document.addEventListener('click', function enableAudio() {
-        audioEnabled = true;
-        document.getElementById('audioNotice').style.display = 'none';
-        document.removeEventListener('click', enableAudio);
-        console.log('Audio enabled');
-      }, { once: true });
+      document.addEventListener(
+        "click",
+        function enableAudio() {
+          audioEnabled = true;
+          document.getElementById("audioNotice").style.display = "none";
+          document.removeEventListener("click", enableAudio);
+          console.log("Audio enabled");
+        },
+        { once: true }
+      );
 
       // Show audio notice initially
       setTimeout(() => {
         if (!audioEnabled) {
-          document.getElementById('audioNotice').style.display = 'block';
+          document.getElementById("audioNotice").style.display = "block";
         }
       }, 2000);
 
       function triggerAlarm() {
         const currentTime = Date.now();
-        
+
         // Check cooldown period
         if (currentTime - lastAlarmTime < ALARM_COOLDOWN) {
-          console.log('Alarm in cooldown period');
+          console.log("Alarm in cooldown period");
           return;
         }
-        
-        console.log('Triggering alarm!');
+
+        console.log("Triggering alarm!");
         if (!alarmActive) {
           alarmActive = true;
           lastAlarmTime = currentTime;
-          alarmBanner.style.display = 'block';
-          
+          alarmBanner.style.display = "block";
+
           if (audioEnabled) {
             // Use Web Audio API for EAS alarm
             createEASAlarm();
           } else {
-            console.log('Audio not enabled yet - click anywhere to enable');
+            console.log("Audio not enabled yet - click anywhere to enable");
           }
-          
+
           // Auto-dismiss after 15 seconds
           setTimeout(() => {
             stopAlarm();
@@ -680,9 +699,9 @@ Loading...</pre
       }
 
       function stopAlarm() {
-        console.log('Stopping alarm');
+        console.log("Stopping alarm");
         alarmActive = false;
-        alarmBanner.style.display = 'none';
+        alarmBanner.style.display = "none";
         stopEASAlarm(); // Stop the EAS alarm
         alarmSound.pause();
         alarmSound.currentTime = 0;
@@ -692,8 +711,8 @@ Loading...</pre
         try {
           const response = await fetch("/api/alerts?unacknowledged=true");
           const data = await response.json();
-          
-          console.log('Alerts data:', data);
+
+          console.log("Alerts data:", data);
 
           const container = document.getElementById("alertsContainer");
           const currentTime = Date.now();
@@ -710,17 +729,27 @@ Loading...</pre
               // Start detection timer if not already started
               if (unknownDetectionStart === null) {
                 unknownDetectionStart = currentTime;
-                console.log('Unknown/spoof detected, starting timer...');
+                console.log("Unknown/spoof detected, starting timer...");
               }
-              
+
               // Check if sustained for required duration
               const detectionDuration = currentTime - unknownDetectionStart;
               if (detectionDuration >= DETECTION_DELAY) {
-                console.log('Sustained detection for', detectionDuration, 'ms - triggering alarm');
+                console.log(
+                  "Sustained detection for",
+                  detectionDuration,
+                  "ms - triggering alarm"
+                );
                 triggerAlarm();
                 unknownDetectionStart = null; // Reset after triggering
               } else {
-                console.log('Detection duration:', detectionDuration, 'ms (need', DETECTION_DELAY, 'ms)');
+                console.log(
+                  "Detection duration:",
+                  detectionDuration,
+                  "ms (need",
+                  DETECTION_DELAY,
+                  "ms)"
+                );
               }
             }
             lastAlertCount = data.total_alerts;
@@ -736,7 +765,11 @@ Loading...</pre
 
               alertItem.innerHTML = `
                 <div class="alert-header">
-                  <span class="alert-type">${alert.type === 'spoof' ? '🚫 SPOOF DETECTED' : '⚠️ UNKNOWN PERSON'}</span>
+                  <span class="alert-type">${
+                    alert.type === "spoof"
+                      ? "🚫 SPOOF DETECTED"
+                      : "⚠️ UNKNOWN PERSON"
+                  }</span>
                   <span class="alert-time">${timeString}</span>
                 </div>
                 <div class="alert-message">${alert.message}</div>
@@ -753,7 +786,7 @@ Loading...</pre
 
       async function acknowledgeAlert(index) {
         try {
-          await fetch(`/api/alerts/${index}/acknowledge`, { method: 'POST' });
+          await fetch(`/api/alerts/${index}/acknowledge`, { method: "POST" });
           updateAlerts();
         } catch (error) {
           console.error("Error acknowledging alert:", error);
@@ -762,7 +795,7 @@ Loading...</pre
 
       async function clearAllAlerts() {
         try {
-          await fetch("/api/alerts/clear", { method: 'POST' });
+          await fetch("/api/alerts/clear", { method: "POST" });
           stopAlarm();
           lastAlertCount = 0;
           updateAlerts();
@@ -772,7 +805,9 @@ Loading...</pre
       }
 
       // Clear alerts button
-      document.getElementById("clearAlerts").addEventListener("click", clearAllAlerts);
+      document
+        .getElementById("clearAlerts")
+        .addEventListener("click", clearAllAlerts);
 
       async function updateDetections() {
         try {
