@@ -13,13 +13,12 @@ services:
       - ./facial_recognition_fixed.py:/app/facial_recognition_fixed.py
       - ./web_server.py:/app/web_server.py
       - ./api_example.py:/app/api_example.py
-    devices:
-      # Grant access to webcam/camera devices
-      - /dev/video0:/dev/video0
-      - /dev/video1:/dev/video1
-    privileged: true
+    # Note: For camera access, run camera_streamer.py on your host
+    # Then set CAMERA_STREAM_URL and CAMERA_STREAM_TOKEN environment variables
     environment:
-      - DISPLAY=${DISPLAY}
       - PYTHONUNBUFFERED=1
-    network_mode: "host"
+      - CAMERA_STREAM_URL=${CAMERA_STREAM_URL:-}
+      - CAMERA_STREAM_TOKEN=${CAMERA_STREAM_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped

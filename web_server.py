@@ -21,15 +21,26 @@ except ImportError:
 
 class WebCamera:
     """
-    Camera wrapper that works with USB webcam or Raspberry Pi camera
+    Camera wrapper that works with USB webcam, Raspberry Pi camera, or network stream
     Integrates with FaceRecognition class for face detection
     """
-    def __init__(self, face_recognition_instance, use_pi_camera=False):
+    def __init__(self, face_recognition_instance, use_pi_camera=False, network_stream_url=None, stream_token=None):
         self.face_recognition = face_recognition_instance
         self.use_pi_camera = use_pi_camera and RASPBERRY_PI
+        self.network_stream_url = network_stream_url
+        self.stream_token = stream_token
+        
+        # Add token to stream URL if provided
+        if self.network_stream_url and self.stream_token:
+            separator = '&' if '?' in self.network_stream_url else '?'
+            self.network_stream_url = f"{self.network_stream_url}{separator}token={self.stream_token}"
         
         # Initialize camera
-        if self.use_pi_camera:
+        if self.network_stream_url:
+            print(f"Connecting to network stream: {self.network_stream_url.split('?')[0]}...")  # Don't print token
+            self.video_capture = cv2.VideoCapture(self.network_stream_url)
+            self.picam = None
+        elif self.use_pi_camera:
             print("Initializing Raspberry Pi Camera...")
             self.picam = Picamera2()
             config = self.picam.create_preview_configuration(main={"size": (640, 480)})
@@ -178,8 +189,30 @@ def clear_alerts():
 if __name__ == '__main__':
     import os
     
-    # Check if we should use Pi camera
+    # Check command line arguments
     use_pi = '--pi' in sys.argv or (RASPBERRY_PI and '--no-pi' not in sys.argv)
+    network_stream = None
+    stream_token = None
+    
+    # Check for network stream URL
+    for arg in sys.argv:
+        if arg.startswith('--stream='):
+            network_stream = arg.split('=', 1)[1]
+            print(f"Using network stream: {network_stream}")
+            break
+    
+    # Check environment variable for Docker
+    if not network_stream:
+        network_stream = os.environ.get('CAMERA_STREAM_URL')
+        if network_stream:
+            print(f"Using camera stream from environment: {network_stream}")
+    
+    # Get authentication token for network streams
+    stream_token = os.environ.get('CAMERA_STREAM_TOKEN')
+    if network_stream and stream_token:
+        print("Using authenticated camera stream")
+    elif network_stream and not stream_token:
+        print("⚠️  WARNING: No CAMERA_STREAM_TOKEN set - stream may require authentication")
     
     # Get number of CPU cores for optimal thread count
     cpu_count = os.cpu_count() or 4
@@ -190,13 +223,20 @@ if __name__ == '__main__':
     face_recognition = FaceRecognition(known_faces_dir='faces', max_workers=max_workers)
     
     # Initialize camera with FaceRecognition instance
-    camera = WebCamera(face_recognition, use_pi_camera=use_pi)
+    camera = WebCamera(face_recognition, use_pi_camera=use_pi, network_stream_url=network_stream, stream_token=stream_token)
     
     print("\n" + "="*50)
     print("Facial Recognition Web Server")
     print("="*50)
     print(f"CPU Cores: {cpu_count} (using {max_workers} worker threads)")
-    print(f"Camera: {'Raspberry Pi Camera' if camera.use_pi_camera else 'USB/Webcam'}")
+    
+    if camera.network_stream_url:
+        print(f"Camera: Network Stream (authenticated)")
+    elif camera.use_pi_camera:
+        print(f"Camera: Raspberry Pi Camera")
+    else:
+        print(f"Camera: USB/Webcam")
+    
     print(f"Known faces loaded: {len(face_recognition.known_face_names)}")
     print(f"Faces: {face_recognition.known_face_names}")
     print("\nAccess the web interface at:")
