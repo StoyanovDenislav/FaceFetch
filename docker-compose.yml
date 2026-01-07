@@ -9,6 +9,10 @@ services:
       - ./faces:/app/faces
       # Mount templates for live editing
       - ./templates:/app/templates
+      # Mount source code for development (live editing)
+      - ./facial_recognition_fixed.py:/app/facial_recognition_fixed.py
+      - ./web_server.py:/app/web_server.py
+      - ./api_example.py:/app/api_example.py
     devices:
       # Grant access to webcam/camera devices
       - /dev/video0:/dev/video0
