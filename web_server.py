@@ -338,11 +338,12 @@ if __name__ == '__main__':
     
     # Get number of CPU cores for optimal thread count
     cpu_count = os.cpu_count() or 4
-    # Use half of available cores for face processing, min 2, max 8
-    max_workers = max(2, min(8, cpu_count // 2))
+    # Use 50/50 split between face processing and backend
+    face_workers = max(2, min(8, cpu_count // 2))  # 50% for face processing, min 2, max 8
+    backend_threads = max(2, cpu_count // 2)  # 50% for backend requests (min 2)
     
     # Initialize FaceRecognition instance with multithreading
-    face_recognition = FaceRecognition(known_faces_dir='faces', max_workers=max_workers)
+    face_recognition = FaceRecognition(known_faces_dir='faces', max_workers=face_workers)
     
     # Initialize camera with FaceRecognition instance
     camera = WebCamera(face_recognition, use_pi_camera=use_pi, network_stream_url=network_stream, stream_token=stream_token)
@@ -350,7 +351,9 @@ if __name__ == '__main__':
     print("\n" + "="*50)
     print("Facial Recognition Web Server (Optimized)")
     print("="*50)
-    print(f"CPU Cores: {cpu_count} (using {max_workers} worker threads)")
+    print(f"CPU Cores: {cpu_count}")
+    print(f"  Face processing: {face_workers} threads (50%)")
+    print(f"  Backend server: {backend_threads} threads (50%)")
     print(f"Architecture: Multi-threaded (capture + processing)")
     
     if camera.network_stream_url:
@@ -384,7 +387,7 @@ if __name__ == '__main__':
         try:
             from waitress import serve
             print("Using Waitress production server")
-            serve(app, host='0.0.0.0', port=5000, threads=max_workers * 2)
+            serve(app, host='0.0.0.0', port=5000, threads=backend_threads)
         except ImportError:
             # Fallback to Flask development server with threading
             print("Using Flask development server (install waitress for production)")
