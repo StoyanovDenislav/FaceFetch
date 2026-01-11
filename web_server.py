@@ -17,7 +17,7 @@ from facial_recognition_fixed import FaceRecognition
 
 # Try to import picamera for Raspberry Pi support
 try:
-    from picamera2 import Picamera2
+    from picamera2 import Picamera2 # type: ignore
     RASPBERRY_PI = True
 except ImportError:
     RASPBERRY_PI = False
