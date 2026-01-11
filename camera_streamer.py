@@ -17,7 +17,7 @@ from dotenv import load_dotenv, set_key, find_dotenv
 
 # Try to import Raspberry Pi camera support
 try:
-    from picamera2 import Picamera2
+    from picamera2 import Picamera2 # type: ignore
     RASPBERRY_PI = True
 except ImportError:
     RASPBERRY_PI = False
