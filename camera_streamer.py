@@ -15,12 +15,7 @@ import socket
 from pathlib import Path
 from dotenv import load_dotenv, set_key, find_dotenv
 
-# Try to import Raspberry Pi camera support
-try:
-    from picamera2 import Picamera2
-    RASPBERRY_PI = True
-except ImportError:
-    RASPBERRY_PI = False
+# USB camera support only (no Raspberry Pi)
 
 
 def generate_and_save_token(env_path='.env'):
@@ -57,26 +52,18 @@ class CameraStream:
     def start(self):
         """Initialize and start the camera"""
         try:
-            if self.camera_type == "picamera":
-                print(f"Starting Raspberry Pi Camera {self.camera_id}...")
-                self.picam = Picamera2()
-                config = self.picam.create_preview_configuration(main={"size": (640, 480)})
-                self.picam.configure(config)
-                self.picam.start()
-                time.sleep(2)
-            else:
-                print(f"Starting USB Camera {self.camera_id}...")
-                self.capture = cv2.VideoCapture(self.camera_id)
-                self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                
-                # Test if camera is accessible
-                if not self.capture.isOpened():
-                    raise Exception(f"Cannot open camera {self.camera_id}")
-                
-                ret, _ = self.capture.read()
-                if not ret:
-                    raise Exception(f"Cannot read from camera {self.camera_id}")
+            print(f"Starting USB Camera {self.camera_id}...")
+            self.capture = cv2.VideoCapture(self.camera_id)
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            
+            # Test if camera is accessible
+            if not self.capture.isOpened():
+                raise Exception(f"Cannot open camera {self.camera_id}")
+            
+            ret, _ = self.capture.read()
+            if not ret:
+                raise Exception(f"Cannot read from camera {self.camera_id}")
             
             self.running = True
             Thread(target=self._update_frame, daemon=True).start()
@@ -91,10 +78,7 @@ class CameraStream:
         """Continuously capture frames in background thread"""
         while self.running:
             try:
-                if self.camera_type == "picamera" and self.picam:
-                    frame = self.picam.capture_array()
-                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                elif self.capture:
+                if self.capture:
                     ret, frame = self.capture.read()
                     if not ret:
                         print(f"Failed to read from camera {self.camera_id}")
@@ -172,35 +156,11 @@ class CameraDiscovery:
         return cameras
     
     @staticmethod
-    def discover_pi_camera():
-        """Discover Raspberry Pi camera"""
-        if not RASPBERRY_PI:
-            return []
-        
-        print("Checking for Raspberry Pi camera...")
-        try:
-            picam = Picamera2()
-            picam.close()
-            print("  ✓ Found: Raspberry Pi Camera")
-            return [{
-                'id': 0,
-                'type': 'picamera',
-                'name': 'Raspberry Pi Camera'
-            }]
-        except Exception as e:
-            print(f"  ✗ No Raspberry Pi camera: {e}")
-            return []
-    
-    @staticmethod
     def discover_all():
-        """Discover all available cameras"""
+        """Discover all available USB cameras only"""
         cameras = []
         
-        # Check for Raspberry Pi camera first
-        pi_cameras = CameraDiscovery.discover_pi_camera()
-        cameras.extend(pi_cameras)
-        
-        # Then check for USB cameras
+        # Check for USB cameras
         usb_cameras = CameraDiscovery.discover_usb_cameras()
         cameras.extend(usb_cameras)
         
@@ -240,7 +200,7 @@ def get_base_url():
     else:
         # Auto-detect local IP
         local_ip = get_local_ip()
-        return f"http://{local_ip}:8080"
+        return f"http://{local_ip}:1337"
 
 
 def require_token(f):
@@ -413,21 +373,21 @@ def main():
         if FORCE_CUSTOM_URL and CUSTOM_URL:
             print(f"  Stream URL: {base_url}/camera/{list(camera_streams.keys())[0]}/stream?token={ACCESS_TOKEN}")
         else:
-            print(f"  Stream URL: http://host.docker.internal:8080/camera/{list(camera_streams.keys())[0]}/stream?token={ACCESS_TOKEN}")
+            print(f"  Stream URL: http://host.docker.internal:1337/camera/{list(camera_streams.keys())[0]}/stream?token={ACCESS_TOKEN}")
     else:
         if FORCE_CUSTOM_URL and CUSTOM_URL:
             print(f"\nFor Docker containers, use: {base_url}")
         else:
-            print(f"\nFor Docker containers, use: http://host.docker.internal:8080")
+            print(f"\nFor Docker containers, use: http://host.docker.internal:1337")
     
     print(f"\n⚠️  To disable authentication (NOT RECOMMENDED):")
     print(f"  Set environment variable: CAMERA_STREAM_AUTH=false")
     print(f"\nPress Ctrl+C to stop")
     print("="*60 + "\n")
     
-    # Start Flask server
+    # Start Flask server on port 1337
     try:
-        app.run(host='0.0.0.0', port=8080, debug=False, threaded=True)
+        app.run(host='0.0.0.0', port=1337, debug=False, threaded=True)
     except KeyboardInterrupt:
         print("\nStopping camera streamer...")
     finally:
