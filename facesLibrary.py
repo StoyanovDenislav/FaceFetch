@@ -8,11 +8,11 @@ app = create_app()
 with app.app_context():
     people_data = [
         {"name": "Denislav", "image_path": "path/to/denislav.jpg"},
-        {"name": "Person2", "image_path": "path/to/person2.jpg"},
-        {"name": "Person3", "image_path": "path/to/person3.jpg"},
-        {"name": "Person4", "image_path": "path/to/person4.jpg"},
-        {"name": "Person5", "image_path": "path/to/person5.jpg"},
-        {"name": "Person6", "image_path": "path/to/person6.jpg"},
+        {"name": "Kristian", "image_path": "path/to/kristian.jpg"},
+        {"name": "Yoan", "image_path": "path/to/yoan.jpg"},
+        {"name": "Hristina", "image_path": "path/to/hristina.jpg"},
+        {"name": "Yoanna", "image_path": "path/to/yoanna.jpg"},
+        {"name": "Brian", "image_path": "path/to/brian.jpg"},
     ]
     
     # Encode images in b64 and store in db
