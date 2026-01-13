@@ -376,51 +376,56 @@ def detect_photo_spoof(frame, face_location, executor=None):
     if face_roi.size == 0:
         return (False, 0.0, {})
     
-    # If executor provided, run checks in parallel
+    # ONLY USE ALGORITHMS THAT ACTUALLY WORK
+    # Run checks that actually detect phones
     if executor is not None:
         futures = {
             'moire': executor.submit(check_moire_pattern, face_roi),
-            'refresh': executor.submit(check_screen_refresh, face_roi),
-            'color_temp': executor.submit(check_color_temperature, face_roi),
-            'texture': executor.submit(check_texture_quality, face_roi),
             'edges': executor.submit(check_edge_artifacts, face_roi),
             'lighting': executor.submit(check_lighting_consistency, face_roi),
-            'reflection': executor.submit(check_reflection_patterns, face_roi),
-            'histogram': executor.submit(check_color_histogram_uniformity, face_roi)
         }
-        
-        # Collect results
         scores = {name: future.result() for name, future in futures.items()}
     else:
-        # Run sequentially if no executor
         scores = {
             'moire': check_moire_pattern(face_roi),
-            'refresh': check_screen_refresh(face_roi),
-            'color_temp': check_color_temperature(face_roi),
-            'texture': check_texture_quality(face_roi),
             'edges': check_edge_artifacts(face_roi),
             'lighting': check_lighting_consistency(face_roi),
-            'reflection': check_reflection_patterns(face_roi),
-            'histogram': check_color_histogram_uniformity(face_roi)
         }
     
-    # Weighted scoring - some checks are more reliable
-    # Reduced weights to be less aggressive
+    # KEY INSIGHT: Moiré triggers on BOTH phones and real faces
+    # But lighting distinguishes them:
+    # - Phones: high moiré + LOW lighting (0-0.5)
+    # - Real faces: high moiré + HIGH lighting (1.0-2.0)
+    
+    # Adjust moiré score based on lighting
+    moire_score = scores.get('moire', 0)
+    lighting_score = scores.get('lighting', 0)
+    
+    # If high moiré BUT also high lighting = real face with patterns, reduce moiré
+    if moire_score >= 2.0 and lighting_score >= 1.0:
+        # Real face with natural patterns
+        scores['moire'] = moire_score * 0.3  # Reduce heavily
+        scores['lighting'] = 0  # Don't count lighting as spoof
+    
     weights = {
-        'moire': 1.3,      # Reduced from 1.5
-        'refresh': 1.0,    # Reduced from 1.2
-        'color_temp': 0.8, # Reduced from 1.0
-        'texture': 1.1,    # Reduced from 1.3
-        'edges': 0.8,      # Reduced from 1.0
-        'lighting': 0.6,   # Reduced from 0.8
-        'reflection': 1.2, # Reduced from 1.4
-        'histogram': 0.7   # Reduced from 0.9
+        'moire': 3.0,
+        'edges': 3.0,
+        'lighting': 2.5,
     }
     
     weighted_total = sum(scores[k] * weights.get(k, 1.0) for k in scores)
     
-    # Use weighted score for decision (higher threshold - more lenient)
-    is_spoof = weighted_total >= 6.0  # Increased from 5.0
+    # DEBUGGING: Print scores to console
+    print(f"\n=== SPOOF DETECTION SCORES ===")
+    for name, score in sorted(scores.items(), key=lambda x: x[1], reverse=True):
+        weighted = score * weights.get(name, 1.0)
+        print(f"  {name:12s}: {score:.2f} (weighted: {weighted:.2f})")
+    print(f"  TOTAL: {weighted_total:.2f} (threshold: 4.0)")
+    print(f"  RESULT: {'🚨 SPOOF DETECTED' if weighted_total >= 4.0 else '✅ PASS'}")
+    print("=" * 30)
+    
+    # Lower threshold since we have fewer but stronger indicators
+    is_spoof = weighted_total >= 4.0
     
     return (is_spoof, weighted_total, scores)
     
