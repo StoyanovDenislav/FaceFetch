@@ -376,51 +376,56 @@ def detect_photo_spoof(frame, face_location, executor=None):
     if face_roi.size == 0:
         return (False, 0.0, {})
     
-    # If executor provided, run checks in parallel
+    # ONLY USE ALGORITHMS THAT ACTUALLY WORK
+    # Run checks that actually detect phones
     if executor is not None:
         futures = {
             'moire': executor.submit(check_moire_pattern, face_roi),
-            'refresh': executor.submit(check_screen_refresh, face_roi),
-            'color_temp': executor.submit(check_color_temperature, face_roi),
-            'texture': executor.submit(check_texture_quality, face_roi),
             'edges': executor.submit(check_edge_artifacts, face_roi),
             'lighting': executor.submit(check_lighting_consistency, face_roi),
-            'reflection': executor.submit(check_reflection_patterns, face_roi),
-            'histogram': executor.submit(check_color_histogram_uniformity, face_roi)
         }
-        
-        # Collect results
         scores = {name: future.result() for name, future in futures.items()}
     else:
-        # Run sequentially if no executor
         scores = {
             'moire': check_moire_pattern(face_roi),
-            'refresh': check_screen_refresh(face_roi),
-            'color_temp': check_color_temperature(face_roi),
-            'texture': check_texture_quality(face_roi),
             'edges': check_edge_artifacts(face_roi),
             'lighting': check_lighting_consistency(face_roi),
-            'reflection': check_reflection_patterns(face_roi),
-            'histogram': check_color_histogram_uniformity(face_roi)
         }
     
-    # Weighted scoring - some checks are more reliable
-    # Reduced weights to be less aggressive
+    # KEY INSIGHT: Moiré triggers on BOTH phones and real faces
+    # But lighting distinguishes them:
+    # - Phones: high moiré + LOW lighting (0-0.5)
+    # - Real faces: high moiré + HIGH lighting (1.0-2.0)
+    
+    # Adjust moiré score based on lighting
+    moire_score = scores.get('moire', 0)
+    lighting_score = scores.get('lighting', 0)
+    
+    # If high moiré BUT also high lighting = real face with patterns, reduce moiré
+    if moire_score >= 2.0 and lighting_score >= 1.0:
+        # Real face with natural patterns
+        scores['moire'] = moire_score * 0.3  # Reduce heavily
+        scores['lighting'] = 0  # Don't count lighting as spoof
+    
     weights = {
-        'moire': 1.3,      # Reduced from 1.5
-        'refresh': 1.0,    # Reduced from 1.2
-        'color_temp': 0.8, # Reduced from 1.0
-        'texture': 1.1,    # Reduced from 1.3
-        'edges': 0.8,      # Reduced from 1.0
-        'lighting': 0.6,   # Reduced from 0.8
-        'reflection': 1.2, # Reduced from 1.4
-        'histogram': 0.7   # Reduced from 0.9
+        'moire': 3.0,
+        'edges': 3.0,
+        'lighting': 2.5,
     }
     
     weighted_total = sum(scores[k] * weights.get(k, 1.0) for k in scores)
     
-    # Use weighted score for decision (higher threshold - more lenient)
-    is_spoof = weighted_total >= 6.0  # Increased from 5.0
+    # DEBUGGING: Print scores to console
+    print(f"\n=== SPOOF DETECTION SCORES ===")
+    for name, score in sorted(scores.items(), key=lambda x: x[1], reverse=True):
+        weighted = score * weights.get(name, 1.0)
+        print(f"  {name:12s}: {score:.2f} (weighted: {weighted:.2f})")
+    print(f"  TOTAL: {weighted_total:.2f} (threshold: 4.0)")
+    print(f"  RESULT: {'🚨 SPOOF DETECTED' if weighted_total >= 4.0 else '✅ PASS'}")
+    print("=" * 30)
+    
+    # Lower threshold since we have fewer but stronger indicators
+    is_spoof = weighted_total >= 4.0
     
     return (is_spoof, weighted_total, scores)
     
@@ -597,6 +602,9 @@ class FaceRecognition:
         alert_cooldown = {}  # Prevent spam alerts
         alert_cooldown_time = 5.0  # Seconds between alerts for same type
         
+        # Spoof score history for temporal smoothing
+        spoof_score_history = {}  # Track spoof scores per face to prevent flickering
+        
         def __init__(self, known_faces_dir='faces', max_workers=4):
             self.known_face_encodings = []
             self.known_face_names = []
@@ -757,160 +765,44 @@ class FaceRecognition:
                 frame, face_location, executor=self.executor
             )
             
-            # Blink detection
-            blink_score, self.blink_history = detect_blinks(face_landmarks, self.blink_history, face_key)
-            
-            # Face size consistency
-            size_score, self.size_history = check_face_size_consistency(face_location, self.size_history, face_key)
-            
-            # Head pose variation
-            pose_score = check_head_pose_variation(self.landmarks_history, face_key)
-            
             # Store debug info
             result['debug'] = {
                 'spoof_score': spoof_score,
                 'depth_score': depth_score,
-                'blink_score': blink_score,
-                'size_score': size_score,
-                'pose_score': pose_score,
                 'spoof_details': spoof_details,
                 'depth_details': depth_details,
-                'blinks': self.blink_history.get(face_key, {}).get('total', 0) if face_key in self.blink_history else 0
             }
             
-            # COMPREHENSIVE DECISION LOGIC with multiple checks:
+            # TEMPORAL SMOOTHING - Track spoof scores over time to prevent flickering
+            if face_key not in self.spoof_score_history:
+                self.spoof_score_history[face_key] = []
             
-            # Calculate combined liveness score
-            # Positive scores = real person, Negative scores = spoof
-            liveness_score = 0
+            # Add current score to history
+            self.spoof_score_history[face_key].append(spoof_score)
             
-            # Add depth evidence (strong positive indicator) - boost it more
-            liveness_score += depth_score * 1.3
+            # Keep only last 5 frames
+            if len(self.spoof_score_history[face_key]) > 5:
+                self.spoof_score_history[face_key] = self.spoof_score_history[face_key][-5:]
             
-            # Subtract spoof indicators (negative evidence) - reduce impact
-            liveness_score -= spoof_score * 0.8
+            # Calculate rolling average
+            avg_spoof_score = np.mean(self.spoof_score_history[face_key])
             
-            # Add blink evidence (strong positive indicator) - boost it
-            liveness_score += blink_score * 1.2
+            # Count how many recent frames had high spoof scores
+            recent_high_scores = sum(1 for s in self.spoof_score_history[face_key][-3:] if s >= 4.0)
             
-            # Add face size variation (moderate indicator)
-            liveness_score += size_score * 0.6
+            result['debug']['avg_spoof_score'] = avg_spoof_score
+            result['debug']['recent_high_scores'] = recent_high_scores
             
-            # Add head pose variation (moderate indicator)
-            liveness_score += pose_score * 0.8
-            
-            result['debug']['liveness_score'] = liveness_score
-            
-            # REJECTION CRITERIA (much more lenient):
-            
-            # 1. VERY high spoof score -> REJECT
-            if spoof_score >= 8.0:  # Increased from 6.5
+            # REJECTION CRITERIA - Require consistent high scores to prevent flickering
+            # Need either: sustained high average OR multiple consecutive high scores
+            if avg_spoof_score >= 4.5 or recent_high_scores >= 2:
                 result['state'] = 'spoof'
-                result['name'] = f"SCREEN/PHOTO! (s:{spoof_score:.1f})"
-                self.trigger_alert('spoof', f"High spoof score: {spoof_score:.1f}", result)
+                result['name'] = f"SPOOF DETECTED (avg:{avg_spoof_score:.1f})"
+                self.trigger_alert('spoof', f"Spoof score: {avg_spoof_score:.1f}", result)
                 return result, result['name']
             
-            # 2. High spoof + very weak liveness -> REJECT
-            if spoof_score >= 6.5 and liveness_score < 0:  # More lenient
-                result['state'] = 'spoof'
-                result['name'] = f"LIKELY SPOOF (s:{spoof_score:.1f}/L:{liveness_score:.1f})"
-                self.trigger_alert('spoof', f"Likely spoof - s:{spoof_score:.1f}, L:{liveness_score:.1f}", result)
-                return result, result['name']
-            
-            # 3. Strongly negative liveness score -> REJECT
-            if liveness_score < -2.5:  # More lenient (was -1.0)
-                result['state'] = 'spoof'
-                result['name'] = f"SPOOF DETECTED (L:{liveness_score:.1f})"
-                self.trigger_alert('spoof', f"Negative liveness score: {liveness_score:.1f}", result)
-                return result, result['name']
-            
-            # If we get here, spoof checks passed or are inconclusive
-            # Now check for positive liveness evidence
-            has_motion = False
-            
-            with self.lock:
-                if face_key in self.last_positions:
-                    last_pos = self.last_positions[face_key]
-                    movement = abs(face_location[0] - last_pos[0]) + abs(face_location[3] - last_pos[3])
-                    if movement > 1:
-                        has_motion = True
-                
-                self.last_positions[face_key] = face_location
-                
-                if face_key not in self.liveness_check:
-                    self.liveness_check[face_key] = {'frames': 0, 'motion_frames': 0}
-                
-                self.liveness_check[face_key]['frames'] += 1
-                if has_motion:
-                    self.liveness_check[face_key]['motion_frames'] += 1
-                
-                frames_seen = self.liveness_check[face_key]['frames']
-                motion_frames = self.liveness_check[face_key]['motion_frames']
-                
-                # Get blink count
-                frames_seen = self.blink_history.get(face_key, {}).get('frames', frames_seen)
-                blinks_seen = self.blink_history.get(face_key, {}).get('total', 0)
-                
-                # Multi-factor liveness verification:
-                # Need positive indicators OR low spoof score
-                
-                positive_indicators = 0
-                
-                # 1. Blinks detected
-                if blinks_seen > 0:
-                    positive_indicators += 2
-                
-                # 2. Strong 3D depth evidence
-                if depth_score >= 4.0:
-                    positive_indicators += 2
-                elif depth_score >= 2.5:
-                    positive_indicators += 1
-                
-                # 3. Natural motion (be more lenient)
-                if frames_seen > 45:
-                    motion_ratio = motion_frames / frames_seen
-                    if motion_ratio > 0.05:  # Reduced from 0.08
-                        positive_indicators += 1
-                
-                # 4. Face size variation
-                if size_score > 1.0:
-                    positive_indicators += 1
-                
-                # 5. Head pose variation
-                if pose_score > 1.0:
-                    positive_indicators += 1
-                
-                # Very lenient acceptance criteria
-                if frames_seen < 90:  # Give 3 seconds to gather evidence
-                    # Still gathering evidence - accept
-                    is_live = True
-                elif spoof_score < 4.0:  # Low spoof score = probably real
-                    # If spoof is low, accept with any evidence
-                    is_live = True
-                elif positive_indicators >= 2:
-                    # Moderate evidence
-                    is_live = True
-                elif positive_indicators >= 1 and spoof_score < 5.5:
-                    # At least one indicator + moderate spoof
-                    is_live = True
-                else:
-                    # Not enough evidence
-                    is_live = False
-            
-            result['is_live'] = is_live
-            result['debug']['positive_indicators'] = positive_indicators
-            
-            # Determine what to display
-            if not is_live:
-                result['state'] = 'pending_verification'
-                # Give specific instructions based on what's missing
-                if blinks_seen == 0 and frames_seen > 120:
-                    result['name'] = f"BLINK please ({positive_indicators}/3)"
-                elif motion_frames < 3 and frames_seen > 120:
-                    result['name'] = f"Move slightly ({positive_indicators}/3)"
-                else:
-                    result['name'] = f"Verifying... ({positive_indicators}/3)"
-            elif len(self.known_face_encodings) > 0:
+            # If spoof score is low, accept the face - proceed to face recognition
+            if len(self.known_face_encodings) > 0:
                 matches = face_recognition.compare_faces(self.known_face_encodings, face_encoding)
                 face_distances = face_recognition.face_distance(self.known_face_encodings, face_encoding)
                 best_match_index = np.argmin(face_distances)
@@ -1146,3 +1038,5 @@ class FaceRecognition:
 if __name__ == '__main__':
     fr = FaceRecognition()
     fr.run_recognition()
+    
+    #test comment
