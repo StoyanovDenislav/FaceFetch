@@ -27,6 +27,59 @@
         text-align: center;
         color: white;
         margin-bottom: 30px;
+        position: relative;
+      }
+
+      .header-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+
+      .user-info {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        background: rgba(255, 255, 255, 0.1);
+        padding: 10px 20px;
+        border-radius: 8px;
+        backdrop-filter: blur(10px);
+      }
+
+      .user-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2em;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+      }
+
+      .user-name {
+        font-size: 0.95em;
+        text-align: left;
+      }
+
+      .logout-link {
+        background: rgba(255, 255, 255, 0.2);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 6px;
+        text-decoration: none;
+        font-size: 0.9em;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        cursor: pointer;
+      }
+
+      .logout-link:hover {
+        background: rgba(255, 255, 255, 0.3);
+        border-color: rgba(255, 255, 255, 0.5);
       }
 
       h1 {
@@ -505,8 +558,23 @@
     </script>
     <div class="container">
       <header>
-        <h1>🔒 Facial Recognition System</h1>
-        <p class="subtitle">Real-time Face Detection & Anti-Spoofing</p>
+        <div class="header-top">
+          <div style="flex: 1;"></div>
+          <div style="flex: 2; text-align: center;">
+            <h1>🔒 Facial Recognition System</h1>
+            <p class="subtitle">Real-time Face Detection & Anti-Spoofing</p>
+          </div>
+          <div style="flex: 1; display: flex; justify-content: flex-end;">
+            <div class="user-info">
+              <div class="user-avatar" id="userAvatar">👤</div>
+              <div class="user-name">
+                <div id="userName" style="font-weight: 600; margin-bottom: 2px;">User</div>
+                <div style="font-size: 0.85em; opacity: 0.9;" id="userEmail">Loading...</div>
+              </div>
+              <a href="/logout" class="logout-link">Logout</a>
+            </div>
+          </div>
+        </div>
       </header>
 
       <div class="main-content">
@@ -635,6 +703,31 @@ Loading...</pre
     </div>
 
     <script>
+      // Load user info from Flask template
+      function loadUserInfo() {
+        // Get from template variables
+        const userName = "{{ user_name }}" || sessionStorage.getItem('user_name') || 'User';
+        const userEmail = "{{ user_email }}" || sessionStorage.getItem('user_email') || '';
+        
+        document.getElementById('userName').textContent = userName;
+        document.getElementById('userEmail').textContent = userEmail;
+        
+        // Store in session storage for persistence
+        sessionStorage.setItem('user_name', userName);
+        sessionStorage.setItem('user_email', userEmail);
+        
+        // Generate avatar initials
+        const initials = userName
+          .split(' ')
+          .map(name => name.charAt(0).toUpperCase())
+          .join('')
+          .slice(0, 2) || 'U';
+        document.getElementById('userAvatar').textContent = initials;
+      }
+
+      // Load user info on page load
+      window.addEventListener('load', loadUserInfo);
+
       let lastTimestamp = 0;
       let alarmSound = document.getElementById("alarmSound");
       let alarmBanner = document.getElementById("alarmBanner");

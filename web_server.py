@@ -4,13 +4,17 @@ Supports both regular webcam and Raspberry Pi camera
 Uses the FaceRecognition class from facial_recognition_fixed.py
 Optimized with multithreading for concurrent request handling
 """
-from flask import Flask, render_template, Response, jsonify, request
+from flask import Flask, render_template, Response, jsonify, request, session, redirect, url_for
+from werkzeug.security import generate_password_hash, check_password_hash
 import cv2
 import sys
 import time
 import threading
 from queue import Queue, Empty
 from collections import deque
+import sqlite3
+import os
+from functools import wraps
 
 # Import the FaceRecognition class from facial_recognition_fixed.py
 from facial_recognition_fixed import FaceRecognition
@@ -205,9 +209,71 @@ class WebCamera:
 # Flask app with optimizations
 app = Flask(__name__)
 
+# Session configuration
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
 # Enable threading and optimizations
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable caching for live feed
 app.config['THREADED'] = True
+
+# Database configuration
+DB_FILE = 'facefetch_users.db'
+
+def init_db():
+    """Initialize the user database"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            company TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def login_required(f):
+    """Decorator to require login for routes"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'message': 'Authentication required'}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+def get_user(email):
+    """Get user by email"""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
+    user = cursor.fetchone()
+    conn.close()
+    return user
+
+def create_user(email, password, first_name, last_name, company=''):
+    """Create a new user"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        password_hash = generate_password_hash(password)
+        cursor.execute('''
+            INSERT INTO users (email, password_hash, first_name, last_name, company)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (email, password_hash, first_name, last_name, company))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        return False
 
 face_recognition = None
 camera = None
@@ -215,18 +281,119 @@ detection_history = []  # Store detection history
 MAX_HISTORY = 50  # Maximum history entries to keep
 history_lock = threading.Lock()  # Thread-safe history access
 
+# Initialize database on startup
+init_db()
+
 @app.route('/')
 def index():
     """Home page with video feed"""
-    return render_template('index.html')
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    return render_template('index.html', 
+                         user_name=session.get('user_name', 'User'),
+                         user_email=session.get('user_email', ''))
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Login route"""
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
+        
+        if not email or not password:
+            return jsonify({'message': 'Email and password are required'}), 400
+        
+        user = get_user(email)
+        
+        if user and check_password_hash(user['password_hash'], password):
+            session['user_id'] = user['id']
+            session['user_email'] = user['email']
+            session['user_name'] = f"{user['first_name']} {user['last_name']}"
+            session.permanent = True
+            return redirect(url_for('index'))
+        else:
+            return jsonify({'message': 'Invalid email or password'}), 401
+    
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+    
+    return render_template('login_page.html')
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    """Register route"""
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
+        first_name = request.form.get('firstName', '').strip()
+        last_name = request.form.get('lastName', '').strip()
+        company = request.form.get('company', '').strip()
+        
+        # Validation
+        if not all([email, password, first_name, last_name]):
+            return jsonify({'message': 'All required fields must be filled'}), 400
+        
+        # Email validation
+        if '@' not in email or '.' not in email:
+            return jsonify({'message': 'Please enter a valid email address'}), 400
+        
+        if len(password) < 8:
+            return jsonify({'message': 'Password must be at least 8 characters long'}), 400
+        
+        if not create_user(email, password, first_name, last_name, company):
+            return jsonify({'message': 'Email already registered'}), 409
+        
+        return jsonify({'message': 'Registration successful'}), 201
+    
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+    
+    return render_template('register_page.html')
+
+@app.route('/logout')
+def logout():
+    """Logout route"""
+    session.clear()
+    return redirect(url_for('login'))
+
+@app.route('/api/auth/status')
+def auth_status():
+    """Check authentication status"""
+    if 'user_id' in session:
+        return jsonify({
+            'authenticated': True,
+            'user_id': session.get('user_id'),
+            'user_email': session.get('user_email'),
+            'user_name': session.get('user_name')
+        })
+    else:
+        return jsonify({'authenticated': False}), 401
+
+@app.route('/api/user/profile')
+@login_required
+def get_user_profile():
+    """Get current user profile"""
+    user = get_user(session.get('user_email'))
+    if user:
+        return jsonify({
+            'id': user['id'],
+            'email': user['email'],
+            'first_name': user['first_name'],
+            'last_name': user['last_name'],
+            'company': user['company'],
+            'created_at': user['created_at']
+        })
+    return jsonify({'message': 'User not found'}), 404
 
 @app.route('/video_feed')
+@login_required
 def video_feed():
     """Video streaming route"""
     return Response(camera.generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/api/detections')
+@login_required
 def get_detections():
     """API endpoint for detection results (thread-safe)"""
     global detection_history
@@ -258,6 +425,7 @@ def get_detections():
     return jsonify(results)
 
 @app.route('/api/history')
+@login_required
 def get_history():
     """API endpoint for detection history (thread-safe)"""
     with history_lock:
@@ -267,6 +435,7 @@ def get_history():
         })
 
 @app.route('/api/history/clear', methods=['POST'])
+@login_required
 def clear_history():
     """Clear detection history (thread-safe)"""
     global detection_history
@@ -275,6 +444,7 @@ def clear_history():
     return jsonify({'status': 'success', 'message': 'History cleared'})
 
 @app.route('/api/status')
+@login_required
 def get_status():
     """API endpoint for system status"""
     return jsonify({
@@ -287,6 +457,7 @@ def get_status():
     })
 
 @app.route('/api/alerts')
+@login_required
 def get_alerts():
     """API endpoint for security alerts"""
     unacknowledged_only = request.args.get('unacknowledged', 'false').lower() == 'true'
@@ -297,12 +468,14 @@ def get_alerts():
     })
 
 @app.route('/api/alerts/<int:alert_id>/acknowledge', methods=['POST'])
+@login_required
 def acknowledge_alert(alert_id):
     """Acknowledge a specific alert"""
     face_recognition.acknowledge_alert(alert_id)
     return jsonify({'status': 'success', 'message': f'Alert {alert_id} acknowledged'})
 
 @app.route('/api/alerts/clear', methods=['POST'])
+@login_required
 def clear_alerts():
     """Clear all alerts"""
     face_recognition.clear_alerts()
