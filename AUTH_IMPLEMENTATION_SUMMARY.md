@@ -8,7 +8,8 @@ The FaceFetch authentication system is now **fully functional** with complete fr
 ### 1. Backend Authentication System
 
 #### Database & User Management
-- **SQLite Database**: `facefetch_users.db` with secure user storage
+- **MySQL Database**: Configurable via environment (`MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DB`)
+- **Auto-Init**: Creates database (if missing) and `users` table on startup
 - **Password Hashing**: Bcrypt-based secure password hashing with salt
 - **User Schema**: Stores email, password_hash, first_name, last_name, company, created_at
 

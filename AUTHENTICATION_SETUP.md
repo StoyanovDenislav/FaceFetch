@@ -45,16 +45,22 @@ A complete authentication system has been implemented for the FaceFetch facial r
 
 ## Backend Implementation
 
-### Database (`facefetch_users.db` - SQLite3)
-- Automatic creation on first startup
-- User table with fields:
-  - `id` (Primary key)
-  - `email` (Unique)
-  - `password_hash` (Bcrypt hashed)
-  - `first_name`
-  - `last_name`
-  - `company` (Optional)
-  - `created_at` (Timestamp)
+### Database (MySQL)
+- Automatic database and table creation on first startup
+- Configure connection via environment variables:
+  - `MYSQL_HOST` (default: `localhost`)
+  - `MYSQL_PORT` (default: `3306`)
+  - `MYSQL_USER` (default: `facefetch`)
+  - `MYSQL_PASSWORD` (default: `facefetch`)
+  - `MYSQL_DB` (default: `facefetch`)
+- Users table schema:
+  - `id` INT AUTO_INCREMENT PRIMARY KEY
+  - `email` VARCHAR(255) UNIQUE NOT NULL
+  - `password_hash` VARCHAR(255) NOT NULL
+  - `first_name` VARCHAR(100) NOT NULL
+  - `last_name` VARCHAR(100) NOT NULL
+  - `company` VARCHAR(255)
+  - `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
 ### Flask Routes
 
@@ -93,8 +99,13 @@ A complete authentication system has been implemented for the FaceFetch facial r
 
 ### Environment Variables
 ```python
-SECRET_KEY  # Set this to a strong secret key in production
-            # Default: 'dev-secret-key-change-in-production'
+SECRET_KEY   # Set this to a strong secret key in production
+# MySQL Connection
+MYSQL_HOST   # e.g., 'localhost'
+MYSQL_PORT   # e.g., '3306'
+MYSQL_USER   # e.g., 'facefetch'
+MYSQL_PASSWORD # e.g., 'facefetch'
+MYSQL_DB     # e.g., 'facefetch'
 ```
 
 ### Session Configuration
@@ -106,7 +117,7 @@ SESSION_COOKIE_SAMESITE = 'Lax'   # CSRF protection
 
 ## Database Initialization
 
-The database is automatically created on the first run:
+The MySQL database and `users` table are automatically created on the first run:
 ```python
 init_db()  # Called at application startup
 ```

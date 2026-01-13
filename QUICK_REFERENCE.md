@@ -61,7 +61,7 @@ Password: MyPassword123!
 | Login Form | `templates/login_page.html` |
 | Register Form | `templates/register_page.html` |
 | Dashboard | `templates/index.html` |
-| Database | `facefetch_users.db` |
+| Database | MySQL (`MYSQL_*` env vars) |
 | Web Server Code | `web_server.py` |
 | Tests | `test_auth.py` |
 

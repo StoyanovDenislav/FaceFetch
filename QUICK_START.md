@@ -96,23 +96,29 @@ All API endpoints and video feed require authentication:
 - "Remember me" functionality (saves email in browser)
 - Logout button
 
-## Database
+## Database (MySQL)
 
-The authentication system uses SQLite with the database file:
+The authentication system now uses MySQL. Configure connection via environment variables (see `.env.example`):
+
 ```
-facefetch_users.db
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=facefetch
+MYSQL_PASSWORD=facefetch
+MYSQL_DB=facefetch
 ```
 
-This file is created automatically on first run.
+On first run, the application will automatically create the database (if missing) and the `users` table.
 
 ### Viewing Users
+Use any MySQL client (Workbench, CLI, or admin UI). Example with MySQL CLI:
 ```bash
-sqlite3 facefetch_users.db "SELECT email, first_name, last_name, created_at FROM users;"
+mysql -h localhost -u facefetch -p -D facefetch -e "SELECT email, first_name, last_name, created_at FROM users;"
 ```
 
 ### Deleting a User (if needed)
 ```bash
-sqlite3 facefetch_users.db "DELETE FROM users WHERE email='user@example.com';"
+mysql -h localhost -u facefetch -p -D facefetch -e "DELETE FROM users WHERE email='user@example.com';"
 ```
 
 ## Testing

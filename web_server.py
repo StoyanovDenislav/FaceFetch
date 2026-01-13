@@ -12,9 +12,11 @@ import time
 import threading
 from queue import Queue, Empty
 from collections import deque
-import sqlite3
 import os
+import mysql.connector as mysql
+from mysql.connector import errorcode
 from functools import wraps
+from dotenv import load_dotenv
 
 # Import the FaceRecognition class from facial_recognition_fixed.py
 from facial_recognition_fixed import FaceRecognition
@@ -209,6 +211,9 @@ class WebCamera:
 # Flask app with optimizations
 app = Flask(__name__)
 
+# Load environment variables from .env if present
+load_dotenv()
+
 # Session configuration
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['SESSION_COOKIE_SECURE'] = True
@@ -219,26 +224,62 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable caching for live feed
 app.config['THREADED'] = True
 
-# Database configuration
-DB_FILE = 'facefetch_users.db'
+# Database configuration (MySQL)
+MYSQL_HOST = os.environ.get('MYSQL_HOST', 'localhost')
+MYSQL_PORT = int(os.environ.get('MYSQL_PORT', '3306'))
+MYSQL_USER = os.environ.get('MYSQL_USER', 'facefetch')
+MYSQL_PASSWORD = os.environ.get('MYSQL_PASSWORD', 'facefetch')
+MYSQL_DB = os.environ.get('MYSQL_DB', 'facefetch')
+
+def _get_mysql_connection(database: bool = True):
+    """Create a MySQL connection.
+    If database=False, connects without selecting a database (for CREATE DATABASE).
+    """
+    cfg = {
+        'host': MYSQL_HOST,
+        'port': MYSQL_PORT,
+        'user': MYSQL_USER,
+        'password': MYSQL_PASSWORD,
+    }
+    if database:
+        cfg['database'] = MYSQL_DB
+    return mysql.connect(**cfg)
+
+def _ensure_database():
+    """Ensure the target MySQL database exists (creates if missing)."""
+    conn = _get_mysql_connection(database=False)
+    try:
+        cur = conn.cursor()
+        # Create database with UTF8MB4 charset for full unicode support
+        cur.execute(f"CREATE DATABASE IF NOT EXISTS {MYSQL_DB} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
 
 def init_db():
-    """Initialize the user database"""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            company TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    """Initialize MySQL database and users table."""
+    _ensure_database()
+    conn = _get_mysql_connection(database=True)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                email VARCHAR(255) NOT NULL UNIQUE,
+                password_hash VARCHAR(255) NOT NULL,
+                first_name VARCHAR(100) NOT NULL,
+                last_name VARCHAR(100) NOT NULL,
+                company VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
         )
-    ''')
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
 
 def login_required(f):
     """Decorator to require login for routes"""
@@ -250,30 +291,40 @@ def login_required(f):
     return decorated_function
 
 def get_user(email):
-    """Get user by email"""
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
-    user = cursor.fetchone()
-    conn.close()
-    return user
+    """Get user by email (MySQL). Returns dict or None."""
+    conn = _get_mysql_connection(database=True)
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute('SELECT id, email, password_hash, first_name, last_name, company, created_at FROM users WHERE email = %s', (email,))
+        user = cursor.fetchone()
+        return user
+    finally:
+        cursor.close()
+        conn.close()
 
 def create_user(email, password, first_name, last_name, company=''):
-    """Create a new user"""
+    """Create a new user in MySQL. Returns True on success, False if email exists."""
+    conn = _get_mysql_connection(database=True)
     try:
-        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         password_hash = generate_password_hash(password)
-        cursor.execute('''
-            INSERT INTO users (email, password_hash, first_name, last_name, company)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (email, password_hash, first_name, last_name, company))
+        cursor.execute(
+            'INSERT INTO users (email, password_hash, first_name, last_name, company) VALUES (%s, %s, %s, %s, %s)',
+            (email, password_hash, first_name, last_name, company)
+        )
         conn.commit()
-        conn.close()
         return True
-    except sqlite3.IntegrityError:
-        return False
+    except mysql.Error as e:
+        # Duplicate entry (email already exists)
+        if getattr(e, 'errno', None) == errorcode.ER_DUP_ENTRY:
+            return False
+        # Re-raise unexpected errors to surface issues
+        raise
+    finally:
+        try:
+            cursor.close()
+        finally:
+            conn.close()
 
 face_recognition = None
 camera = None
@@ -381,7 +432,7 @@ def get_user_profile():
             'first_name': user['first_name'],
             'last_name': user['last_name'],
             'company': user['company'],
-            'created_at': user['created_at']
+            'created_at': str(user['created_at'])
         })
     return jsonify({'message': 'User not found'}), 404
 

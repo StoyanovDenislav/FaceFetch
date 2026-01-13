@@ -41,7 +41,7 @@ You will be automatically redirected to the login page.
 FaceFetch/
 ├── web_server.py                     # Flask application with auth routes
 ├── requirements.txt                  # Python dependencies
-├── facefetch_users.db               # SQLite database (auto-created)
+├── .env.example                     # Example env with MySQL config
 ├── test_auth.py                     # Automated testing script
 │
 ├── templates/
