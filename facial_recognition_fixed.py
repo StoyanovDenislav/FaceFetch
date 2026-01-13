@@ -602,6 +602,9 @@ class FaceRecognition:
         alert_cooldown = {}  # Prevent spam alerts
         alert_cooldown_time = 5.0  # Seconds between alerts for same type
         
+        # Spoof score history for temporal smoothing
+        spoof_score_history = {}  # Track spoof scores per face to prevent flickering
+        
         def __init__(self, known_faces_dir='faces', max_workers=4):
             self.known_face_encodings = []
             self.known_face_names = []
@@ -770,13 +773,32 @@ class FaceRecognition:
                 'depth_details': depth_details,
             }
             
-            # REJECTION CRITERIA - Simple spoof score based only
+            # TEMPORAL SMOOTHING - Track spoof scores over time to prevent flickering
+            if face_key not in self.spoof_score_history:
+                self.spoof_score_history[face_key] = []
             
-            # High spoof score -> REJECT
-            if spoof_score >= 4.0:
+            # Add current score to history
+            self.spoof_score_history[face_key].append(spoof_score)
+            
+            # Keep only last 5 frames
+            if len(self.spoof_score_history[face_key]) > 5:
+                self.spoof_score_history[face_key] = self.spoof_score_history[face_key][-5:]
+            
+            # Calculate rolling average
+            avg_spoof_score = np.mean(self.spoof_score_history[face_key])
+            
+            # Count how many recent frames had high spoof scores
+            recent_high_scores = sum(1 for s in self.spoof_score_history[face_key][-3:] if s >= 4.0)
+            
+            result['debug']['avg_spoof_score'] = avg_spoof_score
+            result['debug']['recent_high_scores'] = recent_high_scores
+            
+            # REJECTION CRITERIA - Require consistent high scores to prevent flickering
+            # Need either: sustained high average OR multiple consecutive high scores
+            if avg_spoof_score >= 4.5 or recent_high_scores >= 2:
                 result['state'] = 'spoof'
-                result['name'] = f"SPOOF DETECTED (score:{spoof_score:.1f})"
-                self.trigger_alert('spoof', f"Spoof score: {spoof_score:.1f}", result)
+                result['name'] = f"SPOOF DETECTED (avg:{avg_spoof_score:.1f})"
+                self.trigger_alert('spoof', f"Spoof score: {avg_spoof_score:.1f}", result)
                 return result, result['name']
             
             # If spoof score is low, accept the face - proceed to face recognition
