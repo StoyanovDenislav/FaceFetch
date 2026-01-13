@@ -9,5 +9,6 @@ class Face(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     person_id = db.Column(db.Integer, db.ForeignKey('person.id'), nullable=False)
     image_path = db.Column(db.String(255), nullable=False)
+    image_b64 = db.Column(db.Text)
     face_encoding = db.Column(db.LargeBinary)
     confidence = db.Column(db.Float)
