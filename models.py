@@ -3,7 +3,7 @@ from __init__ import db
 class Person(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
-    faces = db.relationship('Face', backref='person', lazy=True, cascade="all, delete-orphan")
+    face = db.relationship('Face', backref='person', lazy=True, cascade="all, delete-orphan")
 
 class Face(db.Model):
     id = db.Column(db.Integer, primary_key=True)
