@@ -762,160 +762,25 @@ class FaceRecognition:
                 frame, face_location, executor=self.executor
             )
             
-            # Blink detection
-            blink_score, self.blink_history = detect_blinks(face_landmarks, self.blink_history, face_key)
-            
-            # Face size consistency
-            size_score, self.size_history = check_face_size_consistency(face_location, self.size_history, face_key)
-            
-            # Head pose variation
-            pose_score = check_head_pose_variation(self.landmarks_history, face_key)
-            
             # Store debug info
             result['debug'] = {
                 'spoof_score': spoof_score,
                 'depth_score': depth_score,
-                'blink_score': blink_score,
-                'size_score': size_score,
-                'pose_score': pose_score,
                 'spoof_details': spoof_details,
                 'depth_details': depth_details,
-                'blinks': self.blink_history.get(face_key, {}).get('total', 0) if face_key in self.blink_history else 0
             }
             
-            # COMPREHENSIVE DECISION LOGIC with multiple checks:
+            # REJECTION CRITERIA - Simple spoof score based only
             
-            # Calculate combined liveness score
-            # Positive scores = real person, Negative scores = spoof
-            liveness_score = 0
-            
-            # Add depth evidence (strong positive indicator) - boost it more
-            liveness_score += depth_score * 1.3
-            
-            # Subtract spoof indicators (negative evidence) - reduce impact
-            liveness_score -= spoof_score * 0.8
-            
-            # Add blink evidence (strong positive indicator) - boost it
-            liveness_score += blink_score * 1.2
-            
-            # Add face size variation (moderate indicator)
-            liveness_score += size_score * 0.6
-            
-            # Add head pose variation (moderate indicator)
-            liveness_score += pose_score * 0.8
-            
-            result['debug']['liveness_score'] = liveness_score
-            
-            # REJECTION CRITERIA (much more lenient):
-            
-            # 1. VERY high spoof score -> REJECT
-            if spoof_score >= 8.0:  # Increased from 6.5
+            # High spoof score -> REJECT
+            if spoof_score >= 4.0:
                 result['state'] = 'spoof'
-                result['name'] = f"SCREEN/PHOTO! (s:{spoof_score:.1f})"
-                self.trigger_alert('spoof', f"High spoof score: {spoof_score:.1f}", result)
+                result['name'] = f"SPOOF DETECTED (score:{spoof_score:.1f})"
+                self.trigger_alert('spoof', f"Spoof score: {spoof_score:.1f}", result)
                 return result, result['name']
             
-            # 2. High spoof + very weak liveness -> REJECT
-            if spoof_score >= 6.5 and liveness_score < 0:  # More lenient
-                result['state'] = 'spoof'
-                result['name'] = f"LIKELY SPOOF (s:{spoof_score:.1f}/L:{liveness_score:.1f})"
-                self.trigger_alert('spoof', f"Likely spoof - s:{spoof_score:.1f}, L:{liveness_score:.1f}", result)
-                return result, result['name']
-            
-            # 3. Strongly negative liveness score -> REJECT
-            if liveness_score < -2.5:  # More lenient (was -1.0)
-                result['state'] = 'spoof'
-                result['name'] = f"SPOOF DETECTED (L:{liveness_score:.1f})"
-                self.trigger_alert('spoof', f"Negative liveness score: {liveness_score:.1f}", result)
-                return result, result['name']
-            
-            # If we get here, spoof checks passed or are inconclusive
-            # Now check for positive liveness evidence
-            has_motion = False
-            
-            with self.lock:
-                if face_key in self.last_positions:
-                    last_pos = self.last_positions[face_key]
-                    movement = abs(face_location[0] - last_pos[0]) + abs(face_location[3] - last_pos[3])
-                    if movement > 1:
-                        has_motion = True
-                
-                self.last_positions[face_key] = face_location
-                
-                if face_key not in self.liveness_check:
-                    self.liveness_check[face_key] = {'frames': 0, 'motion_frames': 0}
-                
-                self.liveness_check[face_key]['frames'] += 1
-                if has_motion:
-                    self.liveness_check[face_key]['motion_frames'] += 1
-                
-                frames_seen = self.liveness_check[face_key]['frames']
-                motion_frames = self.liveness_check[face_key]['motion_frames']
-                
-                # Get blink count
-                frames_seen = self.blink_history.get(face_key, {}).get('frames', frames_seen)
-                blinks_seen = self.blink_history.get(face_key, {}).get('total', 0)
-                
-                # Multi-factor liveness verification:
-                # Need positive indicators OR low spoof score
-                
-                positive_indicators = 0
-                
-                # 1. Blinks detected
-                if blinks_seen > 0:
-                    positive_indicators += 2
-                
-                # 2. Strong 3D depth evidence
-                if depth_score >= 4.0:
-                    positive_indicators += 2
-                elif depth_score >= 2.5:
-                    positive_indicators += 1
-                
-                # 3. Natural motion (be more lenient)
-                if frames_seen > 45:
-                    motion_ratio = motion_frames / frames_seen
-                    if motion_ratio > 0.05:  # Reduced from 0.08
-                        positive_indicators += 1
-                
-                # 4. Face size variation
-                if size_score > 1.0:
-                    positive_indicators += 1
-                
-                # 5. Head pose variation
-                if pose_score > 1.0:
-                    positive_indicators += 1
-                
-                # Very lenient acceptance criteria
-                if frames_seen < 90:  # Give 3 seconds to gather evidence
-                    # Still gathering evidence - accept
-                    is_live = True
-                elif spoof_score < 4.0:  # Low spoof score = probably real
-                    # If spoof is low, accept with any evidence
-                    is_live = True
-                elif positive_indicators >= 2:
-                    # Moderate evidence
-                    is_live = True
-                elif positive_indicators >= 1 and spoof_score < 5.5:
-                    # At least one indicator + moderate spoof
-                    is_live = True
-                else:
-                    # Not enough evidence
-                    is_live = False
-            
-            result['is_live'] = is_live
-            result['debug']['positive_indicators'] = positive_indicators
-            
-            # Determine what to display
-            if not is_live:
-                result['state'] = 'pending_verification'
-                # Give specific instructions based on what's missing
-                if blinks_seen == 0 and frames_seen > 120:
-                    result['name'] = f"BLINK please ({positive_indicators}/3)"
-                elif motion_frames < 3 and frames_seen > 120:
-                    result['name'] = f"Move slightly ({positive_indicators}/3)"
-                else:
-                    result['name'] = f"Verifying... ({positive_indicators}/3)"
-            elif len(self.known_face_encodings) > 0:
+            # If spoof score is low, accept the face - proceed to face recognition
+            if len(self.known_face_encodings) > 0:
                 matches = face_recognition.compare_faces(self.known_face_encodings, face_encoding)
                 face_distances = face_recognition.face_distance(self.known_face_encodings, face_encoding)
                 best_match_index = np.argmin(face_distances)
