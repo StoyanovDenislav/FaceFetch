@@ -206,33 +206,31 @@ def check_head_pose_variation(face_landmarks_history, face_key):
     return score
 
 # Individual detection methods for parallel execution
-def check_moire_pattern(face_roi):
-    """Detect moiré patterns from screen pixels"""
-    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+def check_moire_pattern(gray):
+    """Detect moiré patterns from screen pixels (accepts grayscale)"""
     # Apply FFT to detect periodic patterns
     f = np.fft.fft2(gray)
     fshift = np.fft.fftshift(f)
     magnitude = np.abs(fshift)
     
     # Look for regular patterns in frequency domain
-    # Screens create periodic patterns, real faces don't
     h, w = magnitude.shape
     center_h, center_w = h // 2, w // 2
     
-    # Exclude DC component (center)
+    # Exclude DC component
     mask = np.ones((h, w), dtype=bool)
     mask[center_h-5:center_h+5, center_w-5:center_w+5] = False
     
-    # Check for high-frequency peaks (screen pixel grid)
     freq_peaks = magnitude[mask]
     peak_ratio = np.max(freq_peaks) / (np.mean(freq_peaks) + 1e-10)
     
+    # Much higher thresholds - only very clear screen patterns
     score = 0
-    if peak_ratio > 50:  # Strong periodic pattern
+    if peak_ratio > 100:  # Very strong (was 50)
         score = 3.0
-    elif peak_ratio > 30:
+    elif peak_ratio > 70:  # Strong (was 30)
         score = 2.0
-    elif peak_ratio > 20:
+    elif peak_ratio > 50:  # Moderate (was 20)
         score = 1.0
     
     return score
@@ -300,59 +298,47 @@ def check_texture_quality(face_roi):
     
     return score
 
-def check_edge_artifacts(face_roi):
-    """Detect screen/photo borders and artificial edges"""
-    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 100, 200)
+def check_edge_artifacts(gray):
+    """Detect screen/photo borders (accepts grayscale)"""
+    # High thresholds - avoid natural face contours
+    edges = cv2.Canny(gray, 200, 300)
     
-    # Look for straight lines (screen edges, photo borders)
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=30, maxLineGap=10)
+    # Very strict - only perfect straight lines
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, minLineLength=60, maxLineGap=3)
     
     score = 0
-    if lines is not None and len(lines) > 5:
-        # Check for long straight lines (unnatural for faces)
-        long_lines = [l for l in lines if np.hypot(l[0][2]-l[0][0], l[0][3]-l[0][1]) > 50]
-        if len(long_lines) > 3:
-            score = 3.0
-        elif len(long_lines) > 1:
-            score = 1.5
-    
-    # Also check overall edge density
-    edge_density = np.sum(edges > 0) / edges.size
-    if edge_density > 0.15:  # Too many edges (screen bezels, photo edges)
-        score += 1.5
+    if lines is not None and len(lines) > 10:
+        long_lines = [l for l in lines if np.hypot(l[0][2]-l[0][0], l[0][3]-l[0][1]) > 80]
+        
+        if len(long_lines) > 0:
+            angles = [np.arctan2(l[0][3]-l[0][1], l[0][2]-l[0][0]) for l in long_lines]
+            # Must be horizontal or vertical (screen bezels)
+            rect_lines = sum(1 for a in angles if abs(a) < 0.05 or abs(a - np.pi/2) < 0.05 or abs(a + np.pi/2) < 0.05)
+            
+            if rect_lines > 6:
+                score = 3.0
+            elif rect_lines > 4:
+                score = 1.5
     
     return score
 
-def check_lighting_consistency(face_roi):
-    """Analyze lighting - screens have flat/uniform lighting"""
-    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
-    
-    # Real faces have depth-based lighting gradients
-    # Divide face into regions and check variance
+def check_lighting_consistency(gray):
+    """Analyze lighting - only flag extremely flat lighting (accepts grayscale)"""
     h, w = gray.shape
     regions = [
-        gray[0:h//3, :],           # top
-        gray[h//3:2*h//3, :],      # middle
-        gray[2*h//3:h, :],         # bottom
-        gray[:, 0:w//3],           # left
-        gray[:, w//3:2*w//3],      # center
-        gray[:, 2*w//3:w],         # right
+        gray[0:h//3, :], gray[h//3:2*h//3, :], gray[2*h//3:h, :],
+        gray[:, 0:w//3], gray[:, w//3:2*w//3], gray[:, 2*w//3:w],
     ]
     
     region_means = [np.mean(r) for r in regions if r.size > 0]
     lighting_variance = np.var(region_means)
     
+    # Only flag extremely flat lighting (screens)
     score = 0
-    if lighting_variance < 100:  # Too uniform
+    if lighting_variance < 30:  # Very flat (was 100)
         score = 2.0
-    elif lighting_variance < 200:
+    elif lighting_variance < 50:  # Somewhat flat (was 200)
         score = 1.0
-    
-    # Also check for artificial brightness
-    overall_brightness = np.mean(gray)
-    if overall_brightness > 200 or overall_brightness < 40:  # Unnatural
-        score += 1.0
     
     return score
 
@@ -376,20 +362,53 @@ def detect_photo_spoof(frame, face_location, executor=None):
     if face_roi.size == 0:
         return (False, 0.0, {})
     
-    # ONLY USE ALGORITHMS THAT ACTUALLY WORK
-    # Run checks that actually detect phones
+    # ISOLATE FACIAL FEATURES - IGNORE BACKGROUND
+    # Get facial landmarks to create a mask
+    rgb_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2RGB)
+    roi_face_loc = (0, face_roi.shape[1], face_roi.shape[0], 0)
+    landmarks = face_recognition.face_landmarks(rgb_roi, [roi_face_loc])
+    
+    # Create mask for face only (exclude background)
+    mask = np.zeros(face_roi.shape[:2], dtype=np.uint8)
+    if landmarks and len(landmarks) > 0:
+        all_points = []
+        for feature in landmarks[0].values():
+            all_points.extend(feature)
+        if len(all_points) > 0:
+            hull = cv2.convexHull(np.array(all_points))
+            cv2.fillConvexPoly(mask, hull, 255)
+    else:
+        # Fallback: ellipse mask
+        center = (face_roi.shape[1] // 2, face_roi.shape[0] // 2)
+        axes = (int(face_roi.shape[1] * 0.4), int(face_roi.shape[0] * 0.5))
+        cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
+    
+    # NORMALIZE FOR CONSISTENT DETECTION ACROSS ENVIRONMENTS
+    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+    
+    # Apply mask - focus only on face
+    gray = cv2.bitwise_and(gray, gray, mask=mask)
+    
+    # CLAHE normalization - handles different lighting conditions
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    gray = clahe.apply(gray)
+    
+    # Slight underexposure adjustment
+    gray = cv2.convertScaleAbs(gray, alpha=0.85, beta=-15)
+    
+    # Run detection algorithms on normalized, masked face
     if executor is not None:
         futures = {
-            'moire': executor.submit(check_moire_pattern, face_roi),
-            'edges': executor.submit(check_edge_artifacts, face_roi),
-            'lighting': executor.submit(check_lighting_consistency, face_roi),
+            'moire': executor.submit(check_moire_pattern, gray),
+            'edges': executor.submit(check_edge_artifacts, gray),
+            'lighting': executor.submit(check_lighting_consistency, gray),
         }
         scores = {name: future.result() for name, future in futures.items()}
     else:
         scores = {
-            'moire': check_moire_pattern(face_roi),
-            'edges': check_edge_artifacts(face_roi),
-            'lighting': check_lighting_consistency(face_roi),
+            'moire': check_moire_pattern(gray),
+            'edges': check_edge_artifacts(gray),
+            'lighting': check_lighting_consistency(gray),
         }
     
     # KEY INSIGHT: Moiré triggers on BOTH phones and real faces
@@ -401,16 +420,16 @@ def detect_photo_spoof(frame, face_location, executor=None):
     moire_score = scores.get('moire', 0)
     lighting_score = scores.get('lighting', 0)
     
-    # If high moiré BUT also high lighting = real face with patterns, reduce moiré
+    # If high moiré BUT also high lighting = real face
     if moire_score >= 2.0 and lighting_score >= 1.0:
-        # Real face with natural patterns
-        scores['moire'] = moire_score * 0.3  # Reduce heavily
-        scores['lighting'] = 0  # Don't count lighting as spoof
+        scores['moire'] = moire_score * 0.5
+        scores['lighting'] = 0
     
+    # Reduced weights for less sensitivity
     weights = {
-        'moire': 3.0,
-        'edges': 3.0,
-        'lighting': 2.5,
+        'moire': 2.5,
+        'edges': 2.5,
+        'lighting': 2.0,
     }
     
     weighted_total = sum(scores[k] * weights.get(k, 1.0) for k in scores)
@@ -801,9 +820,10 @@ class FaceRecognition:
                 self.trigger_alert('spoof', f"Spoof score: {avg_spoof_score:.1f}", result)
                 return result, result['name']
             
-            # If spoof score is low, accept the face - proceed to face recognition
+            # If spoof score is low, accept the face
+            # Higher tolerance for appearance changes
             if len(self.known_face_encodings) > 0:
-                matches = face_recognition.compare_faces(self.known_face_encodings, face_encoding)
+                matches = face_recognition.compare_faces(self.known_face_encodings, face_encoding, tolerance=0.55)
                 face_distances = face_recognition.face_distance(self.known_face_encodings, face_encoding)
                 best_match_index = np.argmin(face_distances)
             
