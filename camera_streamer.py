@@ -24,6 +24,14 @@ try:
 except ImportError:
     HAS_PICAMERA2 = False
 
+# Try to import PiCamera for legacy Raspberry Pi support
+try:
+    import picamera
+    import numpy as np
+    HAS_PICAMERA = True
+except ImportError:
+    HAS_PICAMERA = False
+
 
 def generate_and_save_token(env_path='.env'):
     """Generate a new token and save it to .env file"""
@@ -51,11 +59,13 @@ class CameraStream:
         self.camera_type = camera_type
         self.capture = None
         self.picam2 = None
+        self.picam = None
         self.frame = None
         self.lock = Lock()
         self.running = False
         self.last_access = time.time()
         self.picam2_config = None
+        self.picam_thread = None
     
     def start(self):
         """Initialize and start the camera"""
@@ -74,16 +84,25 @@ class CameraStream:
                 Thread(target=self._update_frame, daemon=True).start()
                 return True
             elif self.camera_type == "raspberry":
-                if not HAS_PICAMERA2:
-                    raise Exception("picamera2 is not installed or not supported on this platform.")
-                print("Starting Raspberry Pi Camera...")
-                self.picam2 = Picamera2()
-                self.picam2_config = self.picam2.create_video_configuration(main={"size": (640, 480)})
-                self.picam2.configure(self.picam2_config)
-                self.picam2.start()
-                self.running = True
-                Thread(target=self._update_frame_picam2, daemon=True).start()
-                return True
+                if not HAS_PICAMERA and not HAS_PICAMERA2:
+                    raise Exception("picamera or picamera2 is not installed or not supported on this platform.")
+                if HAS_PICAMERA2:
+                    print("Starting Raspberry Pi Camera...")
+                    self.picam2 = Picamera2()
+                    self.picam2_config = self.picam2.create_video_configuration(main={"size": (640, 480)})
+                    self.picam2.configure(self.picam2_config)
+                    self.picam2.start()
+                    self.running = True
+                    Thread(target=self._update_frame_picam2, daemon=True).start()
+                    return True
+                elif HAS_PICAMERA:
+                    print("Starting Raspberry Pi Camera (legacy picamera)...")
+                    self.picam = picamera.PiCamera()
+                    self.picam.resolution = (640, 480)
+                    self.running = True
+                    self.picam_thread = Thread(target=self._update_frame_picamera, daemon=True)
+                    self.picam_thread.start()
+                    return True
             else:
                 raise Exception(f"Unknown camera type: {self.camera_type}")
         except Exception as e:
@@ -128,6 +147,23 @@ class CameraStream:
                 time.sleep(0.1)
             time.sleep(0.03)
 
+    def _update_frame_picamera(self):
+        """Continuously capture frames from legacy PiCamera in background thread"""
+        import io
+        stream = io.BytesIO()
+        while self.running:
+            try:
+                stream.seek(0)
+                self.picam.capture(stream, format='jpeg', use_video_port=True)
+                data = np.frombuffer(stream.getvalue(), dtype=np.uint8)
+                frame = cv2.imdecode(data, 1)
+                with self.lock:
+                    self.frame = frame
+            except Exception as e:
+                print(f"Error capturing frame from PiCamera: {e}")
+                time.sleep(0.1)
+            time.sleep(0.03)
+
     def get_frame(self):
         """Get the latest frame"""
         self.last_access = time.time()
@@ -161,6 +197,11 @@ class CameraStream:
                 self.picam2.stop()
             except:
                 pass
+        if self.picam:
+            try:
+                self.picam.close()
+            except:
+                pass
 
 
 class CameraDiscovery:
@@ -189,8 +230,11 @@ class CameraDiscovery:
 
     @staticmethod
     def discover_raspberry_camera():
-        """Detect Raspberry Pi Camera Module using picamera2"""
-        if HAS_PICAMERA2 and platform.machine().startswith("arm"):
+        """Detect Raspberry Pi Camera Module using picamera2 or legacy picamera"""
+        import os
+        machine = platform.machine().lower()
+        is_rpi = machine.startswith("arm") or machine.startswith("aarch64")
+        if HAS_PICAMERA2 and is_rpi:
             try:
                 picam2 = Picamera2()
                 picam2.close()
@@ -200,7 +244,22 @@ class CameraDiscovery:
                     'name': 'Raspberry Pi Camera Module'
                 }]
             except Exception as e:
-                print(f"No Raspberry Pi Camera detected: {e}")
+                import traceback
+                print("No Raspberry Pi Camera detected:")
+                traceback.print_exc()
+        elif HAS_PICAMERA and is_rpi and os.path.exists('/dev/vchiq'):
+            try:
+                with picamera.PiCamera() as cam:
+                    cam.close()
+                return [{
+                    'id': 0,
+                    'type': 'raspberry',
+                    'name': 'Raspberry Pi Camera Module (legacy)'
+                }]
+            except Exception as e:
+                import traceback
+                print("No Raspberry Pi Camera detected (legacy picamera):")
+                traceback.print_exc()
         return []
 
     @staticmethod
