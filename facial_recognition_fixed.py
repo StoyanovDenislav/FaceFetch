@@ -1043,62 +1043,26 @@ class FaceRecognition:
             # Add current score to history
             self.spoof_score_history[face_key].append(spoof_score)
             
-            # Keep only last 10 frames for better smoothing
-            if len(self.spoof_score_history[face_key]) > 10:
-                self.spoof_score_history[face_key] = self.spoof_score_history[face_key][-10:]
+            # Keep only last 5 frames for faster response
+            if len(self.spoof_score_history[face_key]) > 5:
+                self.spoof_score_history[face_key] = self.spoof_score_history[face_key][-5:]
             
-            # Calculate rolling average over last 10 frames
+            # Calculate rolling average over last 5 frames
             avg_spoof_score = np.mean(self.spoof_score_history[face_key])
             
-            # Calculate rolling average over last 5 frames (shorter window)
-            recent_avg = np.mean(self.spoof_score_history[face_key][-5:])
-            
-            # Count how many recent frames had high spoof scores (lowered threshold)
-            recent_high_scores = sum(1 for s in self.spoof_score_history[face_key][-5:] if s >= 4.0)
-            
             result['debug']['avg_spoof_score'] = avg_spoof_score
-            result['debug']['recent_avg_spoof'] = recent_avg
-            result['debug']['recent_high_scores'] = recent_high_scores
+            result['debug']['spoof_score'] = spoof_score
             
-            # Initialize spoof flag tracking
-            if face_key not in self.spoof_flags:
-                self.spoof_flags[face_key] = False
-            
-            # SIMPLE: Just check if we detected a phone rectangle
+            # NO LOCK - Just check if rectangle detected using rolling average
             rectangle_score = spoof_details.get('phone_rectangle', 0)
             
-            spoof_detected = False
-            detection_reason = ""
-            
-            # Phone rectangle detected - ANY rectangle is suspicious
-            if rectangle_score >= 1.0 or avg_spoof_score >= 1.0:
-                spoof_detected = True
-                detection_reason = "PHONE_RECTANGLE"
-                print(f"  📱 PHONE rectangle detected (score:{rectangle_score:.1f}/1.0)")
-                # IMMEDIATE ALERT
+            # Use rolling average for smoother detection (threshold: 2.0)
+            if avg_spoof_score >= 2.0:
                 result['state'] = 'spoof'
                 result['name'] = f"🚨 PHONE DETECTED 🚨"
-                self.trigger_alert('spoof', f"PHONE RECTANGLE DETECTED - score:{spoof_score:.1f}", result)
-            
-            # Set spoof flag
-            if spoof_detected:
-                self.spoof_flags[face_key] = True
-            
-            # Once flagged, remain flagged until scores are consistently low
-            if self.spoof_flags[face_key]:
-                rect_score = spoof_details.get('phone_rectangle', 0)
-                
-                # Clear flag immediately when scores are low
-                if spoof_score < 2.0 and recent_avg < 2.0 and rect_score < 1.0:
-                    self.spoof_flags[face_key] = False
-                    print(f"  ✅ Spoof CLEARED for {face_key}")
-                else:
-                    result['state'] = 'spoof'
-                    reason_display = detection_reason if detection_reason else "UNKNOWN"
-                    result['name'] = f"{reason_display} [{face_key[-8:]}]"
-                    self.trigger_alert('spoof', f"{reason_display} - score:{avg_spoof_score:.1f}", result)
-                    print(f"  🔒 [{face_key[-12:]}] {reason_display} | Spoof:{avg_spoof_score:.1f} | Rect:{rect_score:.1f} | Bio:{avg_biometric:.1f}")
-                    return result, result['name']
+                self.trigger_alert('spoof', f"PHONE RECTANGLE - avg:{avg_spoof_score:.1f}", result)
+                print(f"  📱 PHONE | Current:{spoof_score:.1f} Avg:{avg_spoof_score:.1f} Rect:{rectangle_score:.1f}")
+                return result, result['name']
             
             # If spoof score is low, accept the face
             # Higher tolerance for appearance changes
