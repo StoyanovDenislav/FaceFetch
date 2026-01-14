@@ -14,8 +14,15 @@ from functools import wraps
 import socket
 from pathlib import Path
 from dotenv import load_dotenv, set_key, find_dotenv
+import platform
 
-# USB camera support only (no Raspberry Pi)
+# Try to import PiCamera2 for Raspberry Pi support
+try:
+    from picamera2 import Picamera2, Preview
+    import numpy as np
+    HAS_PICAMERA2 = True
+except ImportError:
+    HAS_PICAMERA2 = False
 
 
 def generate_and_save_token(env_path='.env'):
@@ -38,42 +45,52 @@ def generate_and_save_token(env_path='.env'):
 
 
 class CameraStream:
-    """Manages a single camera stream"""
+    """Manages a single camera stream (USB or Raspberry Pi)"""
     def __init__(self, camera_id, camera_type="usb"):
         self.camera_id = camera_id
         self.camera_type = camera_type
         self.capture = None
-        self.picam = None
+        self.picam2 = None
         self.frame = None
         self.lock = Lock()
         self.running = False
         self.last_access = time.time()
-        
+        self.picam2_config = None
+    
     def start(self):
         """Initialize and start the camera"""
         try:
-            print(f"Starting USB Camera {self.camera_id}...")
-            self.capture = cv2.VideoCapture(self.camera_id)
-            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            
-            # Test if camera is accessible
-            if not self.capture.isOpened():
-                raise Exception(f"Cannot open camera {self.camera_id}")
-            
-            ret, _ = self.capture.read()
-            if not ret:
-                raise Exception(f"Cannot read from camera {self.camera_id}")
-            
-            self.running = True
-            Thread(target=self._update_frame, daemon=True).start()
-            return True
-            
+            if self.camera_type == "usb":
+                print(f"Starting USB Camera {self.camera_id}...")
+                self.capture = cv2.VideoCapture(self.camera_id)
+                self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                if not self.capture.isOpened():
+                    raise Exception(f"Cannot open camera {self.camera_id}")
+                ret, _ = self.capture.read()
+                if not ret:
+                    raise Exception(f"Cannot read from camera {self.camera_id}")
+                self.running = True
+                Thread(target=self._update_frame, daemon=True).start()
+                return True
+            elif self.camera_type == "raspberry":
+                if not HAS_PICAMERA2:
+                    raise Exception("picamera2 is not installed or not supported on this platform.")
+                print("Starting Raspberry Pi Camera...")
+                self.picam2 = Picamera2()
+                self.picam2_config = self.picam2.create_video_configuration(main={"size": (640, 480)})
+                self.picam2.configure(self.picam2_config)
+                self.picam2.start()
+                self.running = True
+                Thread(target=self._update_frame_picam2, daemon=True).start()
+                return True
+            else:
+                raise Exception(f"Unknown camera type: {self.camera_type}")
         except Exception as e:
             print(f"Failed to start camera {self.camera_id}: {e}")
             self.cleanup()
             return False
-    
+
     def _update_frame(self):
         """Continuously capture frames in background thread"""
         while self.running:
@@ -95,13 +112,28 @@ class CameraStream:
                 time.sleep(0.1)
             
             time.sleep(0.03)  # ~30 FPS
-    
+
+    def _update_frame_picam2(self):
+        """Continuously capture frames from PiCamera2 in background thread"""
+        while self.running:
+            try:
+                if self.picam2:
+                    frame = self.picam2.capture_array()
+                    with self.lock:
+                        self.frame = frame
+                else:
+                    break
+            except Exception as e:
+                print(f"Error capturing frame from PiCamera2: {e}")
+                time.sleep(0.1)
+            time.sleep(0.03)
+
     def get_frame(self):
         """Get the latest frame"""
         self.last_access = time.time()
         with self.lock:
             return self.frame.copy() if self.frame is not None else None
-    
+
     def generate_mjpeg(self):
         """Generate MJPEG stream"""
         while True:
@@ -124,15 +156,15 @@ class CameraStream:
         self.running = False
         if self.capture:
             self.capture.release()
-        if self.picam:
+        if self.picam2:
             try:
-                self.picam.stop()
+                self.picam2.stop()
             except:
                 pass
 
 
 class CameraDiscovery:
-    """Discovers all available cameras"""
+    """Discovers all available cameras (USB and Raspberry Pi)"""
     
     @staticmethod
     def discover_usb_cameras(max_cameras=10):
@@ -154,12 +186,29 @@ class CameraDiscovery:
             cap.release()
         
         return cameras
-    
+
+    @staticmethod
+    def discover_raspberry_camera():
+        """Detect Raspberry Pi Camera Module using picamera2"""
+        if HAS_PICAMERA2 and platform.machine().startswith("arm"):
+            try:
+                picam2 = Picamera2()
+                picam2.close()
+                return [{
+                    'id': 0,
+                    'type': 'raspberry',
+                    'name': 'Raspberry Pi Camera Module'
+                }]
+            except Exception as e:
+                print(f"No Raspberry Pi Camera detected: {e}")
+        return []
+
     @staticmethod
     def discover_all():
-        """Discover all available USB cameras only"""
+        """Discover all available USB and Raspberry Pi cameras"""
         cameras = []
-        
+        # Check for Raspberry Pi camera first
+        cameras.extend(CameraDiscovery.discover_raspberry_camera())
         # Check for USB cameras
         usb_cameras = CameraDiscovery.discover_usb_cameras()
         cameras.extend(usb_cameras)
