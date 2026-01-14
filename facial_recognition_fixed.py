@@ -87,6 +87,99 @@ def detect_blinks(face_landmarks, blink_history, face_key):
     
     return score, blink_history
 
+def detect_pulse(face_roi_history, face_key):
+    """Detect subtle color changes from blood flow - real faces have pulse"""
+    if face_key not in face_roi_history or len(face_roi_history[face_key]) < 30:
+        return 0
+    
+    # Analyze green channel (best for pulse detection)
+    green_means = []
+    for roi in face_roi_history[face_key][-30:]:
+        if roi is not None and roi.size > 0:
+            # Use forehead area (top 1/3 of face)
+            h = roi.shape[0]
+            forehead = roi[0:h//3, :]
+            green = forehead[:, :, 1]
+            green_means.append(np.mean(green))
+    
+    if len(green_means) < 20:
+        return 0
+    
+    # Check for rhythmic variation (pulse)
+    green_std = np.std(green_means)
+    
+    # Real faces: 0.5-3.0 std in green channel
+    # Static images: < 0.3 std
+    score = 0
+    if green_std > 0.8:
+        score = 2.0  # Good pulse signal
+    elif green_std > 0.5:
+        score = 1.0
+    elif green_std < 0.3:
+        score = -1.0  # Too static = fake
+    
+    return score
+
+def detect_micro_movements(landmarks_history, face_key):
+    """Detect subtle natural movements - real people constantly make tiny adjustments"""
+    if face_key not in landmarks_history or len(landmarks_history[face_key]) < 15:
+        return 0
+    
+    # Track nose tip movement (most stable landmark)
+    nose_positions = []
+    for landmarks in landmarks_history[face_key][-15:]:
+        if landmarks and 'nose_tip' in landmarks:
+            nose_tip = landmarks['nose_tip'][2]  # Middle point
+            nose_positions.append(nose_tip)
+    
+    if len(nose_positions) < 10:
+        return 0
+    
+    # Calculate micro-movement variance
+    x_positions = [p[0] for p in nose_positions]
+    y_positions = [p[1] for p in nose_positions]
+    
+    x_std = np.std(x_positions)
+    y_std = np.std(y_positions)
+    total_movement = x_std + y_std
+    
+    score = 0
+    # Real faces: 1-10 pixels of micro-movement
+    # Photos/screens: < 0.5 pixels
+    if total_movement > 3.0:
+        score = 2.0  # Good natural movement
+    elif total_movement > 1.0:
+        score = 1.0
+    elif total_movement < 0.5:
+        score = -1.5  # Too static = fake
+    
+    return score
+
+def check_temporal_consistency(frame_history, face_key):
+    """Real faces have consistent lighting changes, screens have abrupt changes"""
+    if face_key not in frame_history or len(frame_history[face_key]) < 10:
+        return 0
+    
+    # Calculate brightness variance over time
+    brightness_values = []
+    for frame in frame_history[face_key][-10:]:
+        if frame is not None and frame.size > 0:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            brightness_values.append(np.mean(gray))
+    
+    if len(brightness_values) < 8:
+        return 0
+    
+    # Check for smooth transitions
+    diffs = np.diff(brightness_values)
+    abrupt_changes = np.sum(np.abs(diffs) > 10)  # Count large jumps
+    
+    score = 0
+    if abrupt_changes >= 3:  # Multiple abrupt changes = screen
+        score = 1.5
+    
+    return score
+
 def check_face_size_consistency(face_location, size_history, face_key):
     """Real faces change size slightly with movement, photos stay constant"""
     top, right, bottom, left = face_location
@@ -342,7 +435,80 @@ def check_lighting_consistency(gray):
     
     return score
 
-def check_screen_color_spectrum(face_roi):
+def detect_phone_rectangle(face_roi):
+    """Simple phone detection: look for rectangular shape around the face"""
+    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+    
+    # Edge detection
+    edges = cv2.Canny(gray, 50, 150)
+    
+    # Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    score = 0
+    
+    for contour in contours:
+        # Get bounding rectangle
+        x, y, w, h = cv2.boundingRect(contour)
+        
+        # Skip small contours
+        if w < 30 or h < 30:
+            continue
+        
+        # Check if it's rectangular (aspect ratio between 0.5 and 2.0)
+        aspect_ratio = float(w) / h
+        
+        # Calculate how rectangular it is using contour approximation
+        peri = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.04 * peri, True)
+        
+        # Rectangles have 4 corners
+        if len(approx) == 4:
+            # Check if it's a significant portion of the image
+            area = cv2.contourArea(contour)
+            total_area = face_roi.shape[0] * face_roi.shape[1]
+            area_ratio = area / total_area
+            
+            # Phone screen takes up significant portion (20-80%)
+            if 0.2 < area_ratio < 0.8 and 0.5 < aspect_ratio < 2.0:
+                score += 3.0  # Strong rectangle found
+                print(f"    Found rectangle: area={area_ratio:.2f}, aspect={aspect_ratio:.2f}")
+                break
+    
+    # Also check for straight lines (phone edges)
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=40, minLineLength=50, maxLineGap=10)
+    
+    if lines is not None:
+        # Count near-horizontal and near-vertical lines
+        h_lines = 0
+        v_lines = 0
+        
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            length = np.sqrt((x2-x1)**2 + (y2-y1)**2)
+            
+            if length < 40:  # Skip short lines
+                continue
+                
+            angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi)
+            
+            # Horizontal (±10 degrees)
+            if angle < 10 or angle > 170:
+                h_lines += 1
+            # Vertical (90 ±10 degrees)
+            elif 80 < angle < 100:
+                v_lines += 1
+        
+        # Phone has parallel edges
+        if h_lines >= 2 and v_lines >= 2:
+            score += 2.0
+            print(f"    Found phone edges: H={h_lines}, V={v_lines}")
+        elif h_lines >= 1 and v_lines >= 1:
+            score += 1.0
+    
+    return score
+
+def detect_photo_spoof(frame, face_location, executor=None, camera_profile=None):
     """FAST & RELIABLE: Detect screen emission vs natural light reflection"""
     # Screens emit light (RGB pixels), real faces reflect ambient light
     b, g, r = cv2.split(face_roi)
@@ -353,46 +519,44 @@ def check_screen_color_spectrum(face_roi):
     
     score = 0
     
-    # 1. Blue light dominance (LED screens have more blue)
+    # 1. Blue light dominance (LED screens)
     blue_ratio = b_mean / (r_mean + g_mean + 1)
-    if blue_ratio > 0.55:  # Strong blue = screen
-        score += 2.0
-    elif blue_ratio > 0.50:
-        score += 1.0
+    if blue_ratio > 0.58:  # Strong blue = screen
+        score += 2.5
+    elif blue_ratio > 0.54:  # Moderate blue
+        score += 1.5
     
-    # 2. Color uniformity (screens have very uniform color distribution)
+    # 2. Color uniformity (screens are very uniform)
     color_uniformity = (b_std + g_std + r_std) / 3.0
-    if color_uniformity < 15:  # Too uniform = screen
-        score += 2.0
-    elif color_uniformity < 25:
+    if color_uniformity < 12:  # Very uniform = screen
+        score += 2.5
+    elif color_uniformity < 20:  # Somewhat uniform
         score += 1.0
     
-    # 3. RGB balance (real faces have warmer tones, screens are cooler)
+    # 3. RGB balance
     rg_ratio = r_mean / (g_mean + 1)
-    if rg_ratio < 0.85:  # Too much green/blue = screen
+    if rg_ratio < 0.82:  # Cool colors
         score += 1.5
     
     return score
 
 def check_high_frequency_texture(gray):
-    """FAST: Real skin has high-frequency micro-texture that screens lack"""
+    """FAST: Real skin has high-frequency micro-texture"""
     # Use Laplacian variance to detect fine detail
     laplacian = cv2.Laplacian(gray, cv2.CV_64F)
     variance = laplacian.var()
     
     score = 0
-    # Low variance = too smooth = screen/photo
-    if variance < 50:
+    # Balanced thresholds
+    if variance < 35:  # Very smooth = screen
         score = 2.5
-    elif variance < 100:
-        score = 1.5
-    elif variance < 150:
-        score = 0.5
+    elif variance < 65:  # Somewhat smooth
+        score = 1.0
     
     return score
 
-def detect_photo_spoof(frame, face_location, executor=None):
-    """Fast hybrid spoof detection: Color spectrum + Texture + Moiré"""
+def detect_photo_spoof(frame, face_location, executor=None, camera_profile=None):
+    """SIMPLE: Just detect if there's a rectangular phone shape"""
     top, right, bottom, left = face_location
     # Scale back to original frame size
     top *= 4
@@ -411,38 +575,27 @@ def detect_photo_spoof(frame, face_location, executor=None):
     if face_roi.size == 0:
         return (False, 0.0, {})
     
-    # FAST GRAYSCALE for texture analysis
-    gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    gray = clahe.apply(gray)
+    # SINGLE DETECTION: Look for phone rectangle
+    rectangle_score = detect_phone_rectangle(face_roi)
     
-    # THREE FAST, RELIABLE ALGORITHMS
     scores = {
-        'color_spectrum': check_screen_color_spectrum(face_roi),  # Most reliable
-        'texture': check_high_frequency_texture(gray),             # Fast & effective
-        'moire': check_moire_pattern(gray),                        # Screen pattern detection
+        'phone_rectangle': rectangle_score,
     }
     
-    # Color spectrum is most reliable for screens
-    weights = {
-        'color_spectrum': 2.0,
-        'texture': 1.5,
-        'moire': 1.0,
-    }
-    
-    weighted_total = sum(scores[k] * weights.get(k, 1.0) for k in scores)
-    
-    # DEBUGGING
-    print(f"\n=== HYBRID SPOOF DETECTION ===")
-    print(f"  Color Spectrum: {scores['color_spectrum']:.2f} (x2.0 = {scores['color_spectrum']*2:.2f})")
-    print(f"  Texture:        {scores['texture']:.2f} (x1.5 = {scores['texture']*1.5:.2f})")
-    print(f"  Moiré:          {scores['moire']:.2f} (x1.0 = {scores['moire']:.2f})")
-    print(f"  TOTAL:          {weighted_total:.2f} / 4.0 threshold")
-    print(f"  Result: {'🚨 SCREEN/PHOTO' if weighted_total >= 4.0 else '✅ REAL FACE'}")
-    print("=" * 35)
-    
-    # Lowered threshold to 4.0 for more aggressive detection
-    is_spoof = weighted_total >= 4.0
+    # If rectangle detected, max out the spoof score
+    if rectangle_score >= 1.0:
+        weighted_total = 10.0  # Maximum spoof score
+        is_spoof = True
+        print(f"\n🚨🚨🚨 PHONE RECTANGLE DETECTED! 🚨🚨🚨")
+        print(f"  Rectangle Score: {rectangle_score:.2f}")
+        print(f"  SPOOF SCORE: 10.0 (MAX)")
+        print("=" * 40)
+    else:
+        weighted_total = rectangle_score
+        is_spoof = False
+        print(f"\n✅ REAL FACE - No rectangles detected")
+        print(f"  Rectangle Score: {rectangle_score:.2f}")
+        print("=" * 40)
     
     return (is_spoof, weighted_total, scores)
     
@@ -610,6 +763,11 @@ class FaceRecognition:
         size_history = {}  # Track face size changes
         landmarks_history = {}  # Track facial landmarks over time
         
+        # Biometric analysis tracking
+        face_roi_history = {}  # Track face ROI for pulse detection
+        frame_history = {}  # Track frames for temporal consistency
+        biometric_scores = {}  # Store biometric scores with rolling average
+        
         # Face persistence - keep faces displayed
         face_history = {}  # Store face data with timestamps
         face_retention_time = 15.0  # Keep faces for 5 seconds after last detection
@@ -624,6 +782,10 @@ class FaceRecognition:
         spoof_flags = {}  # Track faces that have been marked as spoofs
         spoof_clear_counter = {}  # Counter for clearing spoof flags
         
+        # Persistent face tracking
+        tracked_faces = {}  # Map encoding to persistent face_id
+        next_face_id = 0  # Counter for assigning new face IDs
+        
         def __init__(self, known_faces_dir='faces', max_workers=4):
             self.known_face_encodings = []
             self.known_face_names = []
@@ -631,6 +793,11 @@ class FaceRecognition:
             self.max_workers = max_workers
             self.executor = ThreadPoolExecutor(max_workers=max_workers)
             self.lock = threading.Lock()
+            
+            # Initialize persistent tracking
+            self.tracked_faces = {}
+            self.next_face_id = 0
+            
             print(f"🔧 Initialized with {max_workers} worker threads for CPU optimization")
             self.encode_faces(known_faces_dir)
             
@@ -758,6 +925,27 @@ class FaceRecognition:
             
             face_key = f"face_{idx}"
             
+            # PERSISTENT FACE TRACKING - Match face to existing tracked faces
+            matched_id = None
+            for tracked_key, tracked_encoding in list(self.tracked_faces.items()):
+                # Compare with tracked encodings
+                distance = face_recognition.face_distance([tracked_encoding], face_encoding)[0]
+                if distance < 0.6:  # Same face
+                    matched_id = tracked_key
+                    # Update encoding (slight drift over time)
+                    self.tracked_faces[tracked_key] = face_encoding
+                    break
+            
+            # If no match, this is a new face
+            if matched_id is None:
+                matched_id = f"persistent_face_{self.next_face_id}"
+                self.next_face_id += 1
+                self.tracked_faces[matched_id] = face_encoding
+                print(f"  🆕 New face tracked: {matched_id}")
+            
+            # Use persistent ID for history tracking
+            face_key = matched_id
+            
             # Get facial landmarks for blink detection and head pose
             face_landmarks_list = face_recognition.face_landmarks(rgb_small_frame, [face_location])
             face_landmarks = face_landmarks_list[0] if face_landmarks_list else None
@@ -770,6 +958,59 @@ class FaceRecognition:
                 # Keep last 30 frames
                 if len(self.landmarks_history[face_key]) > 30:
                     self.landmarks_history[face_key] = self.landmarks_history[face_key][-30:]
+            
+            # Store face ROI for biometric analysis (pulse detection)
+            if matched_id not in self.face_roi_history:
+                self.face_roi_history[matched_id] = []
+            
+            # Extract face ROI
+            top, right, bottom, left = face_location
+            top_scaled = max(0, top * 4 - 10)
+            bottom_scaled = min(frame.shape[0], bottom * 4 + 10)
+            left_scaled = max(0, left * 4 - 10)
+            right_scaled = min(frame.shape[1], right * 4 + 10)
+            face_roi = frame[top_scaled:bottom_scaled, left_scaled:right_scaled]
+            
+            self.face_roi_history[matched_id].append(face_roi.copy())
+            if len(self.face_roi_history[matched_id]) > 30:
+                self.face_roi_history[matched_id] = self.face_roi_history[matched_id][-30:]
+            
+            # Store frame history for temporal consistency
+            if matched_id not in self.frame_history:
+                self.frame_history[matched_id] = []
+            self.frame_history[matched_id].append(face_roi.copy())
+            if len(self.frame_history[matched_id]) > 10:
+                self.frame_history[matched_id] = self.frame_history[matched_id][-10:]
+            
+            # BIOMETRIC ANALYSIS - Run after sufficient history
+            biometric_score = 0
+            biometric_details = {}
+            
+            if len(self.face_roi_history.get(matched_id, [])) >= 30:
+                # Pulse detection
+                pulse_score = detect_pulse(self.face_roi_history, matched_id)
+                biometric_details['pulse'] = pulse_score
+                biometric_score += pulse_score
+                
+                # Micro-movement detection
+                movement_score = detect_micro_movements(self.landmarks_history, matched_id)
+                biometric_details['micro_movement'] = movement_score
+                biometric_score += movement_score
+            
+            if len(self.frame_history.get(matched_id, [])) >= 10:
+                # Temporal consistency
+                temporal_score = check_temporal_consistency(self.frame_history, matched_id)
+                biometric_details['temporal'] = temporal_score
+                biometric_score += temporal_score
+            
+            # Track biometric scores with rolling average
+            if matched_id not in self.biometric_scores:
+                self.biometric_scores[matched_id] = []
+            self.biometric_scores[matched_id].append(biometric_score)
+            if len(self.biometric_scores[matched_id]) > 10:
+                self.biometric_scores[matched_id] = self.biometric_scores[matched_id][-10:]
+            
+            avg_biometric = np.mean(self.biometric_scores[matched_id]) if self.biometric_scores[matched_id] else 0
             
             # Get previous frame data for depth detection
             prev_frame = self.prev_frame
@@ -790,6 +1031,9 @@ class FaceRecognition:
                 'depth_score': depth_score,
                 'spoof_details': spoof_details,
                 'depth_details': depth_details,
+                'biometric_score': biometric_score,
+                'biometric_details': biometric_details,
+                'avg_biometric': avg_biometric,
             }
             
             # TEMPORAL SMOOTHING - Track spoof scores over time to prevent flickering
@@ -819,33 +1063,41 @@ class FaceRecognition:
             # Initialize spoof flag tracking
             if face_key not in self.spoof_flags:
                 self.spoof_flags[face_key] = False
-            if face_key not in self.spoof_clear_counter:
-                self.spoof_clear_counter[face_key] = 0
             
-            # STICKY SPOOF DETECTION - More aggressive thresholds
-            # Mark as spoof if: high average OR multiple high scores OR any single very high score
+            # SIMPLE: Just check if we detected a phone rectangle
+            rectangle_score = spoof_details.get('phone_rectangle', 0)
+            
             spoof_detected = False
-            if avg_spoof_score >= 4.0 or recent_high_scores >= 2 or spoof_score >= 6.0:
-                spoof_detected = True
-                self.spoof_flags[face_key] = True
-                self.spoof_clear_counter[face_key] = 0  # Reset counter
+            detection_reason = ""
             
-            # Once marked as spoof, require 15 consecutive LOW scores to clear
+            # Phone rectangle detected - ANY rectangle is suspicious
+            if rectangle_score >= 1.0 or avg_spoof_score >= 1.0:
+                spoof_detected = True
+                detection_reason = "PHONE_RECTANGLE"
+                print(f"  📱 PHONE rectangle detected (score:{rectangle_score:.1f}/1.0)")
+                # IMMEDIATE ALERT
+                result['state'] = 'spoof'
+                result['name'] = f"🚨 PHONE DETECTED 🚨"
+                self.trigger_alert('spoof', f"PHONE RECTANGLE DETECTED - score:{spoof_score:.1f}", result)
+            
+            # Set spoof flag
+            if spoof_detected:
+                self.spoof_flags[face_key] = True
+            
+            # Once flagged, remain flagged until scores are consistently low
             if self.spoof_flags[face_key]:
-                if spoof_score < 3.0 and recent_avg < 3.0:  # Both current and recent must be low
-                    self.spoof_clear_counter[face_key] += 1
-                else:
-                    self.spoof_clear_counter[face_key] = 0  # Reset if any high score
+                rect_score = spoof_details.get('phone_rectangle', 0)
                 
-                # Only clear after 15 consecutive clean frames
-                if self.spoof_clear_counter[face_key] >= 15:
+                # Clear flag immediately when scores are low
+                if spoof_score < 2.0 and recent_avg < 2.0 and rect_score < 1.0:
                     self.spoof_flags[face_key] = False
-                    print(f"  ✅ Spoof flag CLEARED for {face_key} after 15 clean frames")
+                    print(f"  ✅ Spoof CLEARED for {face_key}")
                 else:
                     result['state'] = 'spoof'
-                    result['name'] = f"SPOOF LOCKED (avg:{avg_spoof_score:.1f}, clear:{self.spoof_clear_counter[face_key]}/15)"
-                    self.trigger_alert('spoof', f"Spoof locked - avg: {avg_spoof_score:.1f}", result)
-                    print(f"  🔒 SPOOF LOCKED | Avg: {avg_spoof_score:.1f} | Recent: {recent_avg:.1f} | Clear progress: {self.spoof_clear_counter[face_key]}/15")
+                    reason_display = detection_reason if detection_reason else "UNKNOWN"
+                    result['name'] = f"{reason_display} [{face_key[-8:]}]"
+                    self.trigger_alert('spoof', f"{reason_display} - score:{avg_spoof_score:.1f}", result)
+                    print(f"  🔒 [{face_key[-12:]}] {reason_display} | Spoof:{avg_spoof_score:.1f} | Rect:{rect_score:.1f} | Bio:{avg_biometric:.1f}")
                     return result, result['name']
             
             # If spoof score is low, accept the face
