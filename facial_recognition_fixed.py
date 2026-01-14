@@ -298,6 +298,124 @@ def check_head_pose_variation(face_landmarks_history, face_key):
     
     return score
 
+def detect_screen_contrast(face_roi):
+    """
+    Analyze contrast patterns - screens have artificial contrast vs natural face lighting.
+    Screens: High contrast edges, flat regions, artificial uniformity.
+    Real faces: Smooth gradients, natural shadows, varied contrast.
+    """
+    try:
+        gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+        
+        # Calculate global contrast (std deviation of intensity)
+        global_contrast = np.std(gray)
+        
+        # Calculate local contrast using Sobel gradients
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        gradient_magnitude = np.sqrt(sobelx**2 + sobely**2)
+        edge_strength = np.mean(gradient_magnitude)
+        
+        # Detect sharp transitions (screens have artificial edges)
+        sharp_edges = cv2.Canny(gray, 100, 200)
+        edge_density = np.sum(sharp_edges > 0) / sharp_edges.size
+        
+        # Check contrast uniformity (screens are artificially uniform)
+        # Split into regions and check variance
+        h, w = gray.shape
+        regions = [
+            gray[0:h//2, 0:w//2],
+            gray[0:h//2, w//2:w],
+            gray[h//2:h, 0:w//2],
+            gray[h//2:h, w//2:w]
+        ]
+        region_contrasts = [np.std(r) for r in regions if r.size > 0]
+        contrast_variance = np.var(region_contrasts)
+        
+        score = 0
+        
+        # Screens have:
+        # 1. Artificially uniform contrast (low variance across regions)
+        # 2. Sharp artificial edges (high edge density)
+        # 3. Flat regions with sudden transitions
+        
+        # Low contrast variance = uniform screen backlight
+        if contrast_variance < 20 and global_contrast > 30:
+            score = 3.0
+            print(f"    🔴 Artificial contrast uniformity: var={contrast_variance:.1f}")
+        elif contrast_variance < 40:
+            score = 2.0
+        elif contrast_variance < 60:
+            score = 1.0
+        
+        # High edge density = screen pixels/artifacts
+        if edge_density > 0.15:
+            score += 1.5
+            print(f"    🔴 High edge density (screen pixels): {edge_density:.2%}")
+        elif edge_density > 0.10:
+            score += 1.0
+        
+        return min(score, 5.0)
+        
+    except Exception as e:
+        print(f"    ⚠️  Contrast detection error: {e}")
+        return 0
+
+def detect_screen_brightness(face_roi):
+    """
+    Analyze brightness levels - screens emit light (bright), real faces reflect (dimmer).
+    Screens have artificially high and uniform brightness.
+    """
+    try:
+        # Convert to LAB color space for accurate luminance analysis
+        lab = cv2.cvtColor(face_roi, cv2.COLOR_BGR2LAB)
+        l_channel = lab[:, :, 0]  # Luminance channel
+        
+        # Calculate brightness statistics
+        mean_brightness = np.mean(l_channel)
+        brightness_std = np.std(l_channel)
+        max_brightness = np.max(l_channel)
+        
+        # Calculate percentage of very bright pixels
+        very_bright_mask = l_channel > 200
+        bright_ratio = np.sum(very_bright_mask) / l_channel.size
+        
+        # Also check RGB brightness
+        gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+        rgb_brightness = np.mean(gray)
+        
+        score = 0
+        
+        # Screens characteristics:
+        # 1. Very high mean brightness (>170 in LAB L channel)
+        # 2. Low std (uniform backlight)
+        # 3. Many pixels near maximum brightness
+        
+        # High brightness = screen emission
+        if mean_brightness > 180:
+            score = 3.0
+            print(f"    🔴 Screen brightness detected: L={mean_brightness:.1f}")
+        elif mean_brightness > 160:
+            score = 2.5
+        elif mean_brightness > 140:
+            score = 1.5
+        
+        # Low std with high brightness = uniform screen backlight
+        if mean_brightness > 140 and brightness_std < 25:
+            score += 1.5
+            print(f"    🔴 Uniform screen backlight: std={brightness_std:.1f}")
+        
+        # High ratio of very bright pixels
+        if bright_ratio > 0.3:
+            score += 1.0
+            print(f"    🔴 High bright pixel ratio: {bright_ratio:.2%}")
+        
+        return min(score, 5.0)
+        
+    except Exception as e:
+        print(f"    ⚠️  Brightness detection error: {e}")
+        return 0
+
 # Individual detection methods for parallel execution
 def check_moire_pattern(gray):
     """Detect moiré patterns from screen pixels (accepts grayscale)"""
@@ -515,53 +633,6 @@ def detect_phone_rectangle(face_roi):
     return score
 
 def detect_photo_spoof(frame, face_location, executor=None, camera_profile=None):
-    """FAST & RELIABLE: Detect screen emission vs natural light reflection"""
-    # Screens emit light (RGB pixels), real faces reflect ambient light
-    b, g, r = cv2.split(face_roi)
-    
-    # Calculate channel statistics
-    b_mean, g_mean, r_mean = np.mean(b), np.mean(g), np.mean(r)
-    b_std, g_std, r_std = np.std(b), np.std(g), np.std(r)
-    
-    score = 0
-    
-    # 1. Blue light dominance (LED screens)
-    blue_ratio = b_mean / (r_mean + g_mean + 1)
-    if blue_ratio > 0.58:  # Strong blue = screen
-        score += 2.5
-    elif blue_ratio > 0.54:  # Moderate blue
-        score += 1.5
-    
-    # 2. Color uniformity (screens are very uniform)
-    color_uniformity = (b_std + g_std + r_std) / 3.0
-    if color_uniformity < 12:  # Very uniform = screen
-        score += 2.5
-    elif color_uniformity < 20:  # Somewhat uniform
-        score += 1.0
-    
-    # 3. RGB balance
-    rg_ratio = r_mean / (g_mean + 1)
-    if rg_ratio < 0.82:  # Cool colors
-        score += 1.5
-    
-    return score
-
-def check_high_frequency_texture(gray):
-    """FAST: Real skin has high-frequency micro-texture"""
-    # Use Laplacian variance to detect fine detail
-    laplacian = cv2.Laplacian(gray, cv2.CV_64F)
-    variance = laplacian.var()
-    
-    score = 0
-    # Balanced thresholds
-    if variance < 35:  # Very smooth = screen
-        score = 2.5
-    elif variance < 65:  # Somewhat smooth
-        score = 1.0
-    
-    return score
-
-def detect_photo_spoof(frame, face_location, executor=None, camera_profile=None):
     """SIMPLE: Just detect if there's a rectangular phone shape"""
     top, right, bottom, left = face_location
     # Scale back to original frame size
@@ -773,6 +844,10 @@ class FaceRecognition:
         face_roi_history = {}  # Track face ROI for pulse detection
         frame_history = {}  # Track frames for temporal consistency
         biometric_scores = {}  # Store biometric scores with rolling average
+        
+        # Screen detection history (rolling averages)
+        contrast_score_history = {}  # Track contrast scores over time
+        brightness_score_history = {}  # Track brightness scores over time
         
         # Face persistence - keep faces displayed
         face_history = {}  # Store face data with timestamps
@@ -992,6 +1067,34 @@ class FaceRecognition:
             biometric_score = 0
             biometric_details = {}
             
+            # SCREEN CONTRAST - Detect artificial contrast patterns
+            contrast_score = detect_screen_contrast(face_roi)
+            biometric_details['screen_contrast'] = contrast_score
+            
+            # Track contrast with rolling average (5 frames)
+            if matched_id not in self.contrast_score_history:
+                self.contrast_score_history[matched_id] = []
+            self.contrast_score_history[matched_id].append(contrast_score)
+            if len(self.contrast_score_history[matched_id]) > 5:
+                self.contrast_score_history[matched_id] = self.contrast_score_history[matched_id][-5:]
+            avg_contrast = np.mean(self.contrast_score_history[matched_id]) if self.contrast_score_history[matched_id] else 0
+            biometric_details['avg_contrast'] = avg_contrast
+            biometric_score -= avg_contrast  # Use averaged score
+            
+            # SCREEN BRIGHTNESS - Detect screen emission vs reflected light
+            brightness_score = detect_screen_brightness(face_roi)
+            biometric_details['screen_brightness'] = brightness_score
+            
+            # Track brightness with rolling average (5 frames)
+            if matched_id not in self.brightness_score_history:
+                self.brightness_score_history[matched_id] = []
+            self.brightness_score_history[matched_id].append(brightness_score)
+            if len(self.brightness_score_history[matched_id]) > 5:
+                self.brightness_score_history[matched_id] = self.brightness_score_history[matched_id][-5:]
+            avg_brightness = np.mean(self.brightness_score_history[matched_id]) if self.brightness_score_history[matched_id] else 0
+            biometric_details['avg_brightness'] = avg_brightness
+            biometric_score -= avg_brightness  # Use averaged score
+            
             if len(self.face_roi_history.get(matched_id, [])) >= 30:
                 # Pulse detection
                 pulse_score = detect_pulse(self.face_roi_history, matched_id)
@@ -1059,15 +1162,35 @@ class FaceRecognition:
             result['debug']['avg_spoof_score'] = avg_spoof_score
             result['debug']['spoof_score'] = spoof_score
             
-            # NO LOCK - Just check if rectangle detected using rolling average
+            # Get screen indicators (using rolling averages)
+            avg_contrast = biometric_details.get('avg_contrast', 0)
+            avg_brightness = biometric_details.get('avg_brightness', 0)
+            
+            # NO LOCK - Check for screen indicators
             rectangle_score = spoof_details.get('phone_rectangle', 0)
+            
+            # REJECT if high screen contrast detected (rolling average)
+            if avg_contrast >= 2.0:  # Lower threshold with rolling average
+                result['state'] = 'spoof'
+                result['name'] = f"🚨 SCREEN CONTRAST DETECTED"
+                self.trigger_alert('spoof', f"Screen contrast - Avg:{avg_contrast:.1f}", result)
+                print(f"  ❌ SCREEN CONTRAST | Avg:{avg_contrast:.1f}")
+                return result, result['name']
+            
+            # REJECT if screen brightness detected (rolling average)
+            if avg_brightness >= 2.0:  # Lower threshold with rolling average
+                result['state'] = 'spoof'
+                result['name'] = f"🚨 SCREEN BRIGHTNESS DETECTED"
+                self.trigger_alert('spoof', f"Screen brightness - Avg:{avg_brightness:.1f}", result)
+                print(f"  ❌ SCREEN BRIGHTNESS | Avg:{avg_brightness:.1f}")
+                return result, result['name']
             
             # Use rolling average for smoother detection (threshold: 1.5 - lower since we're now more accurate)
             if avg_spoof_score >= 1.5:
                 result['state'] = 'spoof'
                 result['name'] = f"🚨 PHONE DETECTED 🚨"
                 self.trigger_alert('spoof', f"PHONE RECTANGLE - avg:{avg_spoof_score:.1f}", result)
-                print(f"  📱 PHONE | Current:{spoof_score:.1f} Avg:{avg_spoof_score:.1f} Rect:{rectangle_score:.1f}")
+                print(f"  📱 PHONE | Current:{spoof_score:.1f} Avg:{avg_spoof_score:.1f} Rect:{rectangle_score:.1f} | Contrast:{avg_contrast:.1f} Bright:{avg_brightness:.1f}")
                 return result, result['name']
             
             # If spoof score is low, accept the face
