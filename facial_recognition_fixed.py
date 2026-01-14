@@ -436,74 +436,80 @@ def check_lighting_consistency(gray):
     return score
 
 def detect_phone_rectangle(face_roi):
-    """Simple phone detection: look for rectangular shape around the face"""
+    """Detect if the detected face appears to be displayed on a screen (any rectangle = phone/screen)"""
     gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
     
     # Edge detection
     edges = cv2.Canny(gray, 50, 150)
     
     # Find contours
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     
     score = 0
     
+    # Since we already detected a face, ANY rectangle in the frame suggests it's on a screen
     for contour in contours:
-        # Get bounding rectangle
-        x, y, w, h = cv2.boundingRect(contour)
+        area = cv2.contourArea(contour)
         
-        # Skip small contours
-        if w < 30 or h < 30:
+        # Skip tiny contours
+        if area < 300:
             continue
         
-        # Check if it's rectangular (aspect ratio between 0.5 and 2.0)
-        aspect_ratio = float(w) / h
+        # Get bounding rectangle
+        x, y, w_rect, h_rect = cv2.boundingRect(contour)
         
-        # Calculate how rectangular it is using contour approximation
+        # Check if it's rectangular using contour approximation
         peri = cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, 0.04 * peri, True)
+        approx = cv2.approxPolyDP(contour, 0.03 * peri, True)
         
-        # Rectangles have 4 corners
+        # Look for 4-sided shapes (rectangles)
         if len(approx) == 4:
-            # Check if it's a significant portion of the image
-            area = cv2.contourArea(contour)
-            total_area = face_roi.shape[0] * face_roi.shape[1]
-            area_ratio = area / total_area
+            aspect_ratio = float(w_rect) / h_rect if h_rect > 0 else 0
             
-            # Phone screen takes up significant portion (20-80%)
-            if 0.2 < area_ratio < 0.8 and 0.5 < aspect_ratio < 2.0:
-                score += 3.0  # Strong rectangle found
-                print(f"    Found rectangle: area={area_ratio:.2f}, aspect={aspect_ratio:.2f}")
-                break
+            # Calculate rectangularity
+            rect_area = w_rect * h_rect
+            rectangularity = area / rect_area if rect_area > 0 else 0
+            
+            # Phone-like rectangle characteristics
+            if rectangularity > 0.75 and 0.4 < aspect_ratio < 2.5:
+                area_ratio = area / (w * h)
+                
+                # Any significant rectangle (15% or more of the face ROI) is suspicious
+                # A face displayed on phone will have screen edges visible
+                if area_ratio > 0.15:
+                    score += 3.0  # Strong indicator
+                    print(f"    ⚠️  Rectangle in face ROI: {area_ratio:.2%} of frame, rectangularity={rectangularity:.2f}")
+                    break
     
-    # Also check for straight lines (phone edges)
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=40, minLineLength=50, maxLineGap=10)
+    # Also check for parallel straight lines (screen bezels)
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=35, minLineLength=int(min(w,h)*0.3), maxLineGap=10)
     
     if lines is not None:
-        # Count near-horizontal and near-vertical lines
-        h_lines = 0
-        v_lines = 0
+        h_lines = []
+        v_lines = []
         
         for line in lines:
             x1, y1, x2, y2 = line[0]
             length = np.sqrt((x2-x1)**2 + (y2-y1)**2)
             
-            if length < 40:  # Skip short lines
+            if length < 30:
                 continue
                 
             angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi)
             
-            # Horizontal (±10 degrees)
-            if angle < 10 or angle > 170:
-                h_lines += 1
-            # Vertical (90 ±10 degrees)
-            elif 80 < angle < 100:
-                v_lines += 1
+            # Horizontal (±12 degrees for tolerance)
+            if angle < 12 or angle > 168:
+                h_lines.append(length)
+            # Vertical (90 ±12 degrees)
+            elif 78 < angle < 102:
+                v_lines.append(length)
         
-        # Phone has parallel edges
-        if h_lines >= 2 and v_lines >= 2:
+        # Phones have parallel edges
+        if len(h_lines) >= 2 and len(v_lines) >= 2:
             score += 2.0
-            print(f"    Found phone edges: H={h_lines}, V={v_lines}")
-        elif h_lines >= 1 and v_lines >= 1:
+            print(f"    ⚠️  Phone edges detected: H={len(h_lines)}, V={len(v_lines)}")
+        elif len(h_lines) >= 1 and len(v_lines) >= 1:
             score += 1.0
     
     return score
@@ -1056,8 +1062,8 @@ class FaceRecognition:
             # NO LOCK - Just check if rectangle detected using rolling average
             rectangle_score = spoof_details.get('phone_rectangle', 0)
             
-            # Use rolling average for smoother detection (threshold: 2.0)
-            if avg_spoof_score >= 2.0:
+            # Use rolling average for smoother detection (threshold: 1.5 - lower since we're now more accurate)
+            if avg_spoof_score >= 1.5:
                 result['state'] = 'spoof'
                 result['name'] = f"🚨 PHONE DETECTED 🚨"
                 self.trigger_alert('spoof', f"PHONE RECTANGLE - avg:{avg_spoof_score:.1f}", result)
