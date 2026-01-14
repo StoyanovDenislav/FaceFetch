@@ -342,8 +342,57 @@ def check_lighting_consistency(gray):
     
     return score
 
+def check_screen_color_spectrum(face_roi):
+    """FAST & RELIABLE: Detect screen emission vs natural light reflection"""
+    # Screens emit light (RGB pixels), real faces reflect ambient light
+    b, g, r = cv2.split(face_roi)
+    
+    # Calculate channel statistics
+    b_mean, g_mean, r_mean = np.mean(b), np.mean(g), np.mean(r)
+    b_std, g_std, r_std = np.std(b), np.std(g), np.std(r)
+    
+    score = 0
+    
+    # 1. Blue light dominance (LED screens have more blue)
+    blue_ratio = b_mean / (r_mean + g_mean + 1)
+    if blue_ratio > 0.55:  # Strong blue = screen
+        score += 2.0
+    elif blue_ratio > 0.50:
+        score += 1.0
+    
+    # 2. Color uniformity (screens have very uniform color distribution)
+    color_uniformity = (b_std + g_std + r_std) / 3.0
+    if color_uniformity < 15:  # Too uniform = screen
+        score += 2.0
+    elif color_uniformity < 25:
+        score += 1.0
+    
+    # 3. RGB balance (real faces have warmer tones, screens are cooler)
+    rg_ratio = r_mean / (g_mean + 1)
+    if rg_ratio < 0.85:  # Too much green/blue = screen
+        score += 1.5
+    
+    return score
+
+def check_high_frequency_texture(gray):
+    """FAST: Real skin has high-frequency micro-texture that screens lack"""
+    # Use Laplacian variance to detect fine detail
+    laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+    variance = laplacian.var()
+    
+    score = 0
+    # Low variance = too smooth = screen/photo
+    if variance < 50:
+        score = 2.5
+    elif variance < 100:
+        score = 1.5
+    elif variance < 150:
+        score = 0.5
+    
+    return score
+
 def detect_photo_spoof(frame, face_location, executor=None):
-    """Parallel anti-spoofing detection - runs all checks simultaneously"""
+    """Fast hybrid spoof detection: Color spectrum + Texture + Moiré"""
     top, right, bottom, left = face_location
     # Scale back to original frame size
     top *= 4
@@ -362,89 +411,38 @@ def detect_photo_spoof(frame, face_location, executor=None):
     if face_roi.size == 0:
         return (False, 0.0, {})
     
-    # ISOLATE FACIAL FEATURES - IGNORE BACKGROUND
-    # Get facial landmarks to create a mask
-    rgb_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2RGB)
-    roi_face_loc = (0, face_roi.shape[1], face_roi.shape[0], 0)
-    landmarks = face_recognition.face_landmarks(rgb_roi, [roi_face_loc])
-    
-    # Create mask for face only (exclude background)
-    mask = np.zeros(face_roi.shape[:2], dtype=np.uint8)
-    if landmarks and len(landmarks) > 0:
-        all_points = []
-        for feature in landmarks[0].values():
-            all_points.extend(feature)
-        if len(all_points) > 0:
-            hull = cv2.convexHull(np.array(all_points))
-            cv2.fillConvexPoly(mask, hull, 255)
-    else:
-        # Fallback: ellipse mask
-        center = (face_roi.shape[1] // 2, face_roi.shape[0] // 2)
-        axes = (int(face_roi.shape[1] * 0.4), int(face_roi.shape[0] * 0.5))
-        cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
-    
-    # NORMALIZE FOR CONSISTENT DETECTION ACROSS ENVIRONMENTS
+    # FAST GRAYSCALE for texture analysis
     gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
-    
-    # Apply mask - focus only on face
-    gray = cv2.bitwise_and(gray, gray, mask=mask)
-    
-    # CLAHE normalization - handles different lighting conditions
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     gray = clahe.apply(gray)
     
-    # Slight underexposure adjustment
-    gray = cv2.convertScaleAbs(gray, alpha=0.85, beta=-15)
+    # THREE FAST, RELIABLE ALGORITHMS
+    scores = {
+        'color_spectrum': check_screen_color_spectrum(face_roi),  # Most reliable
+        'texture': check_high_frequency_texture(gray),             # Fast & effective
+        'moire': check_moire_pattern(gray),                        # Screen pattern detection
+    }
     
-    # Run detection algorithms on normalized, masked face
-    if executor is not None:
-        futures = {
-            'moire': executor.submit(check_moire_pattern, gray),
-            'edges': executor.submit(check_edge_artifacts, gray),
-            'lighting': executor.submit(check_lighting_consistency, gray),
-        }
-        scores = {name: future.result() for name, future in futures.items()}
-    else:
-        scores = {
-            'moire': check_moire_pattern(gray),
-            'edges': check_edge_artifacts(gray),
-            'lighting': check_lighting_consistency(gray),
-        }
-    
-    # KEY INSIGHT: Moiré triggers on BOTH phones and real faces
-    # But lighting distinguishes them:
-    # - Phones: high moiré + LOW lighting (0-0.5)
-    # - Real faces: high moiré + HIGH lighting (1.0-2.0)
-    
-    # Adjust moiré score based on lighting
-    moire_score = scores.get('moire', 0)
-    lighting_score = scores.get('lighting', 0)
-    
-    # If high moiré BUT also high lighting = real face
-    if moire_score >= 2.0 and lighting_score >= 1.0:
-        scores['moire'] = moire_score * 0.5
-        scores['lighting'] = 0
-    
-    # Reduced weights for less sensitivity
+    # Color spectrum is most reliable for screens
     weights = {
-        'moire': 2.5,
-        'edges': 2.5,
-        'lighting': 2.0,
+        'color_spectrum': 2.0,
+        'texture': 1.5,
+        'moire': 1.0,
     }
     
     weighted_total = sum(scores[k] * weights.get(k, 1.0) for k in scores)
     
-    # DEBUGGING: Print scores to console
-    print(f"\n=== SPOOF DETECTION SCORES ===")
-    for name, score in sorted(scores.items(), key=lambda x: x[1], reverse=True):
-        weighted = score * weights.get(name, 1.0)
-        print(f"  {name:12s}: {score:.2f} (weighted: {weighted:.2f})")
-    print(f"  TOTAL: {weighted_total:.2f} (threshold: 4.0)")
-    print(f"  RESULT: {'🚨 SPOOF DETECTED' if weighted_total >= 4.0 else '✅ PASS'}")
-    print("=" * 30)
+    # DEBUGGING
+    print(f"\n=== HYBRID SPOOF DETECTION ===")
+    print(f"  Color Spectrum: {scores['color_spectrum']:.2f} (x2.0 = {scores['color_spectrum']*2:.2f})")
+    print(f"  Texture:        {scores['texture']:.2f} (x1.5 = {scores['texture']*1.5:.2f})")
+    print(f"  Moiré:          {scores['moire']:.2f} (x1.0 = {scores['moire']:.2f})")
+    print(f"  TOTAL:          {weighted_total:.2f} / 4.5 threshold")
+    print(f"  Result: {'🚨 SCREEN/PHOTO' if weighted_total >= 4.5 else '✅ REAL FACE'}")
+    print("=" * 35)
     
-    # Lower threshold since we have fewer but stronger indicators
-    is_spoof = weighted_total >= 4.0
+    # Need at least 4.5 weighted score to flag as spoof
+    is_spoof = weighted_total >= 4.5
     
     return (is_spoof, weighted_total, scores)
     
