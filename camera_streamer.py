@@ -138,8 +138,10 @@ class CameraStream:
             try:
                 if self.picam2:
                     frame = self.picam2.capture_array()
+                    # Convert RGB (picamera2 output) to BGR (OpenCV expects BGR)
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                     with self.lock:
-                        self.frame = frame
+                        self.frame = frame_bgr
                 else:
                     break
             except Exception as e:
