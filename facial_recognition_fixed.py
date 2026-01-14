@@ -209,6 +209,39 @@ def check_face_size_consistency(face_location, size_history, face_key):
     
     return score, size_history
 
+def estimate_face_distance(face_location, frame_shape):
+    """
+    Estimate relative distance between camera and face based on face size.
+    Larger face in frame = closer to camera = potential phone being held up close.
+    Returns: (distance_category, face_size_ratio, is_too_close)
+    """
+    top, right, bottom, left = face_location
+    # Locations are in downscaled coordinates (0.25x), so multiply by 4
+    face_height = (bottom - top) * 4
+    face_width = (right - left) * 4
+    
+    # Calculate face area as percentage of frame
+    frame_height, frame_width = frame_shape[:2]
+    face_area = face_height * face_width
+    frame_area = frame_height * frame_width
+    face_size_ratio = face_area / frame_area
+    
+    # Categorize distance based on face size
+    # Normal face at comfortable distance: 8-20% of frame
+    # Too close (suspicious): >25% of frame
+    # Very close (phone held up): >35% of frame
+    
+    if face_size_ratio > 0.25:
+        return ("very_close", face_size_ratio, True)
+    elif face_size_ratio > 0.20:
+        return ("close", face_size_ratio, True)
+    elif face_size_ratio > 0.15:
+        return ("slightly_close", face_size_ratio, False)
+    elif face_size_ratio > 0.08:
+        return ("normal", face_size_ratio, False)
+    else:
+        return ("far", face_size_ratio, False)
+
 def check_reflection_patterns(face_roi):
     """Detect screen/photo reflections and glare"""
     gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
@@ -1067,6 +1100,12 @@ class FaceRecognition:
             biometric_score = 0
             biometric_details = {}
             
+            # DISTANCE ESTIMATION - Check if face is too close (phone being held up)
+            distance_category, face_size_ratio, is_too_close = estimate_face_distance(face_location, frame.shape)
+            biometric_details['distance_category'] = distance_category
+            biometric_details['face_size_ratio'] = face_size_ratio
+            biometric_details['is_too_close'] = is_too_close
+            
             # SCREEN CONTRAST - Detect artificial contrast patterns
             contrast_score = detect_screen_contrast(face_roi)
             biometric_details['screen_contrast'] = contrast_score
@@ -1094,6 +1133,12 @@ class FaceRecognition:
             avg_brightness = np.mean(self.brightness_score_history[matched_id]) if self.brightness_score_history[matched_id] else 0
             biometric_details['avg_brightness'] = avg_brightness
             biometric_score -= avg_brightness  # Use averaged score
+            
+            # If face is too close, increase weight of brightness/contrast checks
+            if is_too_close:
+                print(f"    ⚠️  Face too close ({face_size_ratio:.1%} of frame) - Distance: {distance_category}")
+                # When face is very close (phone held up), prioritize brightness/contrast detection
+                biometric_score -= (avg_brightness * 0.5 + avg_contrast * 0.5)  # Extra penalty
             
             if len(self.face_roi_history.get(matched_id, [])) >= 30:
                 # Pulse detection
@@ -1165,9 +1210,20 @@ class FaceRecognition:
             # Get screen indicators (using rolling averages)
             avg_contrast = biometric_details.get('avg_contrast', 0)
             avg_brightness = biometric_details.get('avg_brightness', 0)
+            is_too_close = biometric_details.get('is_too_close', False)
+            distance_category = biometric_details.get('distance_category', 'normal')
+            face_size_ratio = biometric_details.get('face_size_ratio', 0)
             
             # NO LOCK - Check for screen indicators
             rectangle_score = spoof_details.get('phone_rectangle', 0)
+            
+            # REJECT if face is too close AND high brightness/contrast (phone held up close)
+            if is_too_close and (avg_brightness >= 1.5 or avg_contrast >= 1.5):
+                result['state'] = 'spoof'
+                result['name'] = f"🚨 SCREEN TOO CLOSE ({face_size_ratio:.0%})"
+                self.trigger_alert('spoof', f"Screen at close range - Distance:{distance_category} Bright:{avg_brightness:.1f} Contrast:{avg_contrast:.1f}", result)
+                print(f"  ❌ SCREEN TOO CLOSE | {distance_category} ({face_size_ratio:.1%}) Bright:{avg_brightness:.1f} Contrast:{avg_contrast:.1f}")
+                return result, result['name']
             
             # REJECT if high screen contrast detected (rolling average)
             if avg_contrast >= 2.0:  # Lower threshold with rolling average
