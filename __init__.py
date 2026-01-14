@@ -39,7 +39,7 @@ def create_app():
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     db.init_app(app)
 
-    from .models import Person
+    from .models import User, FaceProfile, Session, DetectionEvent, Command
     with app.app_context():
         db.create_all()
 
@@ -49,6 +49,6 @@ def create_app():
 
     @login_manager.user_loader
     def load_user(id):
-        return Person.query.get(int(id))
+        return User.query.get(int(id))
 
     return app
