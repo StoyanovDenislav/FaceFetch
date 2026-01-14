@@ -882,6 +882,10 @@ class FaceRecognition:
         contrast_score_history = {}  # Track contrast scores over time
         brightness_score_history = {}  # Track brightness scores over time
         
+        # Screen detection state - remember when screen was detected too close
+        screen_detected_state = {}  # Track if face was flagged as screen (persists until cleared)
+        screen_detection_counter = {}  # Count frames since screen detected
+        
         # Face persistence - keep faces displayed
         face_history = {}  # Store face data with timestamps
         face_retention_time = 15.0  # Keep faces for 5 seconds after last detection
@@ -1217,12 +1221,39 @@ class FaceRecognition:
             # NO LOCK - Check for screen indicators
             rectangle_score = spoof_details.get('phone_rectangle', 0)
             
-            # REJECT if face is too close AND high brightness/contrast (phone held up close)
+            # CHECK PERSISTENT SCREEN STATE - If previously flagged as screen, stay blocked until cleared
+            if matched_id in self.screen_detected_state and self.screen_detected_state[matched_id]:
+                # Check if conditions met to CLEAR the screen state
+                # Must be: Far distance + Low brightness + Low contrast + Good biometric score
+                can_clear = (
+                    distance_category in ['normal', 'far'] and
+                    avg_brightness < 1.0 and
+                    avg_contrast < 1.0 and
+                    avg_biometric > 0.5
+                )
+                
+                if can_clear:
+                    # Clear the screen state - real person detected
+                    self.screen_detected_state[matched_id] = False
+                    print(f"  ✅ Screen state CLEARED | Distance:{distance_category} Bio:{avg_biometric:.1f}")
+                else:
+                    # Still blocked - maintain screen detected state
+                    result['state'] = 'spoof'
+                    result['name'] = f"🚨 SCREEN BLOCKED (Awaiting Real Person)"
+                    print(f"  🔒 SCREEN BLOCKED | Distance:{distance_category} Bright:{avg_brightness:.1f} Contrast:{avg_contrast:.1f} Bio:{avg_biometric:.1f}")
+                    return result, result['name']
+            
+            # DETECT & SET SCREEN STATE - If face is too close AND high brightness/contrast (phone held up close)
             if is_too_close and (avg_brightness >= 1.5 or avg_contrast >= 1.5):
+                # Set persistent screen state
+                self.screen_detected_state[matched_id] = True
+                self.screen_detection_counter[matched_id] = 0
+                
                 result['state'] = 'spoof'
                 result['name'] = f"🚨 SCREEN TOO CLOSE ({face_size_ratio:.0%})"
                 self.trigger_alert('spoof', f"Screen at close range - Distance:{distance_category} Bright:{avg_brightness:.1f} Contrast:{avg_contrast:.1f}", result)
                 print(f"  ❌ SCREEN TOO CLOSE | {distance_category} ({face_size_ratio:.1%}) Bright:{avg_brightness:.1f} Contrast:{avg_contrast:.1f}")
+                print(f"  🔒 Screen state SET - Will remain blocked until real person detected")
                 return result, result['name']
             
             # REJECT if high screen contrast detected (rolling average)
