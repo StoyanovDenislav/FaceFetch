@@ -437,12 +437,12 @@ def detect_photo_spoof(frame, face_location, executor=None):
     print(f"  Color Spectrum: {scores['color_spectrum']:.2f} (x2.0 = {scores['color_spectrum']*2:.2f})")
     print(f"  Texture:        {scores['texture']:.2f} (x1.5 = {scores['texture']*1.5:.2f})")
     print(f"  Moiré:          {scores['moire']:.2f} (x1.0 = {scores['moire']:.2f})")
-    print(f"  TOTAL:          {weighted_total:.2f} / 4.5 threshold")
-    print(f"  Result: {'🚨 SCREEN/PHOTO' if weighted_total >= 4.5 else '✅ REAL FACE'}")
+    print(f"  TOTAL:          {weighted_total:.2f} / 4.0 threshold")
+    print(f"  Result: {'🚨 SCREEN/PHOTO' if weighted_total >= 4.0 else '✅ REAL FACE'}")
     print("=" * 35)
     
-    # Need at least 4.5 weighted score to flag as spoof
-    is_spoof = weighted_total >= 4.5
+    # Lowered threshold to 4.0 for more aggressive detection
+    is_spoof = weighted_total >= 4.0
     
     return (is_spoof, weighted_total, scores)
     
@@ -621,6 +621,8 @@ class FaceRecognition:
         
         # Spoof score history for temporal smoothing
         spoof_score_history = {}  # Track spoof scores per face to prevent flickering
+        spoof_flags = {}  # Track faces that have been marked as spoofs
+        spoof_clear_counter = {}  # Counter for clearing spoof flags
         
         def __init__(self, known_faces_dir='faces', max_workers=4):
             self.known_face_encodings = []
@@ -797,26 +799,54 @@ class FaceRecognition:
             # Add current score to history
             self.spoof_score_history[face_key].append(spoof_score)
             
-            # Keep only last 5 frames
-            if len(self.spoof_score_history[face_key]) > 5:
-                self.spoof_score_history[face_key] = self.spoof_score_history[face_key][-5:]
+            # Keep only last 10 frames for better smoothing
+            if len(self.spoof_score_history[face_key]) > 10:
+                self.spoof_score_history[face_key] = self.spoof_score_history[face_key][-10:]
             
-            # Calculate rolling average
+            # Calculate rolling average over last 10 frames
             avg_spoof_score = np.mean(self.spoof_score_history[face_key])
             
-            # Count how many recent frames had high spoof scores
-            recent_high_scores = sum(1 for s in self.spoof_score_history[face_key][-3:] if s >= 4.0)
+            # Calculate rolling average over last 5 frames (shorter window)
+            recent_avg = np.mean(self.spoof_score_history[face_key][-5:])
+            
+            # Count how many recent frames had high spoof scores (lowered threshold)
+            recent_high_scores = sum(1 for s in self.spoof_score_history[face_key][-5:] if s >= 4.0)
             
             result['debug']['avg_spoof_score'] = avg_spoof_score
+            result['debug']['recent_avg_spoof'] = recent_avg
             result['debug']['recent_high_scores'] = recent_high_scores
             
-            # REJECTION CRITERIA - Require consistent high scores to prevent flickering
-            # Need either: sustained high average OR multiple consecutive high scores
-            if avg_spoof_score >= 4.5 or recent_high_scores >= 2:
-                result['state'] = 'spoof'
-                result['name'] = f"SPOOF DETECTED (avg:{avg_spoof_score:.1f})"
-                self.trigger_alert('spoof', f"Spoof score: {avg_spoof_score:.1f}", result)
-                return result, result['name']
+            # Initialize spoof flag tracking
+            if face_key not in self.spoof_flags:
+                self.spoof_flags[face_key] = False
+            if face_key not in self.spoof_clear_counter:
+                self.spoof_clear_counter[face_key] = 0
+            
+            # STICKY SPOOF DETECTION - More aggressive thresholds
+            # Mark as spoof if: high average OR multiple high scores OR any single very high score
+            spoof_detected = False
+            if avg_spoof_score >= 4.0 or recent_high_scores >= 2 or spoof_score >= 6.0:
+                spoof_detected = True
+                self.spoof_flags[face_key] = True
+                self.spoof_clear_counter[face_key] = 0  # Reset counter
+            
+            # Once marked as spoof, require 15 consecutive LOW scores to clear
+            if self.spoof_flags[face_key]:
+                if spoof_score < 3.0 and recent_avg < 3.0:  # Both current and recent must be low
+                    self.spoof_clear_counter[face_key] += 1
+                else:
+                    self.spoof_clear_counter[face_key] = 0  # Reset if any high score
+                
+                # Only clear after 15 consecutive clean frames
+                if self.spoof_clear_counter[face_key] >= 15:
+                    self.spoof_flags[face_key] = False
+                    print(f"  ✅ Spoof flag CLEARED for {face_key} after 15 clean frames")
+                else:
+                    result['state'] = 'spoof'
+                    result['name'] = f"SPOOF LOCKED (avg:{avg_spoof_score:.1f}, clear:{self.spoof_clear_counter[face_key]}/15)"
+                    self.trigger_alert('spoof', f"Spoof locked - avg: {avg_spoof_score:.1f}", result)
+                    print(f"  🔒 SPOOF LOCKED | Avg: {avg_spoof_score:.1f} | Recent: {recent_avg:.1f} | Clear progress: {self.spoof_clear_counter[face_key]}/15")
+                    return result, result['name']
             
             # If spoof score is low, accept the face
             # Higher tolerance for appearance changes
