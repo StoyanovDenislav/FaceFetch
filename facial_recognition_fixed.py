@@ -945,7 +945,122 @@ class FaceRecognition:
             self.next_face_id = 0
             
             print(f"🔧 Initialized with {max_workers} worker threads for CPU optimization")
+            
+            # Camera calibration - detect sensor and tune parameters
+            print("\n📷 Starting camera calibration...")
+            self.camera_profile = self.calibrate_camera()
+            
             self.encode_faces(known_faces_dir)
+            
+        def calibrate_camera(self):
+            """Detect camera sensor format and focal length to tune detection parameters"""
+            profile = {
+                'sensor_width': None,
+                'sensor_height': None,
+                'focal_length': None,
+                'resolution': None,
+                'brightness_scale': 1.0,
+                'distance_scale': 1.0,
+                'calibrated': False
+            }
+            
+            try:
+                # Open camera temporarily for calibration
+                cap = cv2.VideoCapture(0)
+                if not cap.isOpened():
+                    print("  ⚠️  Could not open camera for calibration")
+                    return profile
+                
+                # Get resolution
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                profile['resolution'] = (width, height)
+                print(f"  ✓ Resolution: {width}x{height}")
+                
+                # Try to get focal length (not all cameras support this)
+                focal_length = cap.get(cv2.CAP_PROP_FOCUS)
+                if focal_length > 0:
+                    profile['focal_length'] = focal_length
+                    print(f"  ✓ Focal Length: {focal_length:.1f}mm")
+                else:
+                    # Estimate based on typical webcam FOV (70-80 degrees)
+                    # Assuming 75 degree horizontal FOV
+                    fov_rad = 75 * (3.14159 / 180)
+                    estimated_focal = (width / 2) / np.tan(fov_rad / 2)
+                    profile['focal_length'] = estimated_focal
+                    print(f"  ⚠️  Focal length unknown, estimated: {estimated_focal:.1f}px (75° FOV)")
+                
+                # Estimate sensor size based on resolution
+                # Most webcams are 1/3" to 1/2.3" sensors
+                aspect_ratio = width / height
+                if width >= 1920:  # HD or higher
+                    sensor_diagonal_mm = 7.0  # ~1/2.3" sensor
+                elif width >= 1280:
+                    sensor_diagonal_mm = 6.0  # ~1/3" sensor  
+                else:
+                    sensor_diagonal_mm = 4.5  # ~1/4" sensor
+                
+                # Calculate sensor dimensions from diagonal
+                sensor_width_mm = sensor_diagonal_mm / np.sqrt(1 + (1/aspect_ratio)**2)
+                sensor_height_mm = sensor_width_mm / aspect_ratio
+                profile['sensor_width'] = sensor_width_mm
+                profile['sensor_height'] = sensor_height_mm
+                print(f"  ✓ Estimated Sensor: {sensor_width_mm:.1f}x{sensor_height_mm:.1f}mm")
+                
+                # Calculate scaling factors relative to full frame (36x24mm)
+                full_frame_width = 36.0
+                crop_factor = full_frame_width / sensor_width_mm
+                profile['crop_factor'] = crop_factor
+                print(f"  ✓ Crop Factor: {crop_factor:.2f}x")
+                
+                # Capture test frame for brightness calibration
+                ret, frame = cap.read()
+                if ret:
+                    # Analyze ambient brightness
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    mean_brightness = np.mean(gray)
+                    std_brightness = np.std(gray)
+                    
+                    # Convert to LAB for better brightness analysis
+                    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+                    l_channel = lab[:, :, 0]
+                    lab_brightness = np.mean(l_channel)
+                    
+                    print(f"  ✓ Ambient: Gray={mean_brightness:.1f}, LAB L={lab_brightness:.1f}")
+                    
+                    # Adjust brightness threshold based on sensor characteristics
+                    # Smaller sensors with higher crop factors tend to be noisier and have different brightness characteristics
+                    if crop_factor > 5.0:  # Small sensor (1/3" or smaller)
+                        profile['brightness_scale'] = 0.85  # More lenient
+                    elif crop_factor > 3.0:  # Medium sensor (1/2.3")
+                        profile['brightness_scale'] = 0.92
+                    else:  # Larger sensor
+                        profile['brightness_scale'] = 1.0
+                    
+                    # Adjust distance thresholds based on focal length and sensor
+                    # Wider FOV cameras need adjusted distance calculations
+                    fov_horizontal = 2 * np.arctan(sensor_width_mm / (2 * profile['focal_length'])) * (180 / 3.14159)
+                    print(f"  ✓ Estimated Horizontal FOV: {fov_horizontal:.1f}°")
+                    
+                    if fov_horizontal > 80:  # Wide angle
+                        profile['distance_scale'] = 1.15  # Face appears smaller, adjust threshold
+                    elif fov_horizontal < 60:  # Narrow angle
+                        profile['distance_scale'] = 0.9  # Face appears larger
+                    else:
+                        profile['distance_scale'] = 1.0
+                    
+                    profile['calibrated'] = True
+                    print(f"  ✓ Brightness Scale: {profile['brightness_scale']:.2f}")
+                    print(f"  ✓ Distance Scale: {profile['distance_scale']:.2f}")
+                
+                cap.release()
+                print("  ✅ Camera calibration complete\n")
+                
+            except Exception as e:
+                print(f"  ⚠️  Calibration error: {e}")
+                print("  ℹ️  Using default parameters\n")
+            
+            return profile
             
         def encode_faces(self, known_faces_dir='faces'):
             """Load and encode known faces in parallel"""
@@ -1176,13 +1291,18 @@ class FaceRecognition:
             distance_category = biometric_details.get('distance_category', 'normal')
             face_size_ratio = biometric_details.get('face_size_ratio', 0)
             
+            # Apply camera calibration to brightness threshold
+            brightness_threshold = 1.2
+            if hasattr(self, 'camera_profile') and self.camera_profile.get('calibrated', False):
+                brightness_threshold *= self.camera_profile.get('brightness_scale', 1.0)
+            
             # CHECK PERSISTENT SCREEN STATE - If previously flagged as too close, stay blocked until cleared
             if matched_id in self.screen_detected_state and self.screen_detected_state[matched_id]:
                 # Check if conditions met to CLEAR the state
                 # Must be: Not too close + Low brightness
                 can_clear = (
                     not is_too_close and
-                    avg_brightness < 1.5
+                    avg_brightness < (brightness_threshold * 0.7)  # More lenient for clearing
                 )
                 
                 if can_clear:
@@ -1210,11 +1330,11 @@ class FaceRecognition:
                 return result, result['name']
             
             # REJECT if screen brightness detected (rolling average)
-            if avg_brightness >= 1.2:  # Sensitive threshold for screen detection
+            if avg_brightness >= brightness_threshold:  # Calibrated threshold for screen detection
                 result['state'] = 'spoof'
                 result['name'] = f"Screen Brightness Detected"
-                self.trigger_alert('spoof', f"Screen brightness - Avg:{avg_brightness:.1f}", result)
-                print(f"  SCREEN BRIGHTNESS | Avg:{avg_brightness:.1f}")
+                self.trigger_alert('spoof', f"Screen brightness - Avg:{avg_brightness:.1f} (threshold:{brightness_threshold:.2f})", result)
+                print(f"  SCREEN BRIGHTNESS | Avg:{avg_brightness:.1f} Threshold:{brightness_threshold:.2f}")
                 return result, result['name']
             
             # If spoof score is low, accept the face
