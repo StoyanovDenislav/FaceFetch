@@ -1424,50 +1424,101 @@ class FaceRecognition:
                         bottom *= 4
                         left *= 4
                         
-                        # Use different color for spoofing detection
-                        if "PHOTO" in name or "SCREEN" in name or "SPOOF" in name:
-                            color = (0, 0, 255)  # Red for spoof detected
+                        # Enhanced visual feedback with better colors and status indicators
+                        if "PHOTO" in name or "SCREEN" in name or "SPOOF" in name or "BLOCKED" in name:
+                            color = (0, 0, 255)  # Red for spoof/blocked
+                            status_icon = "⛔"
+                            box_thickness = 3
                         elif "Move" in name or "BLINK" in name or "Verifying" in name:
-                            color = (0, 165, 255)  # Orange for verification needed
+                            color = (0, 165, 255)  # Orange for verification
+                            status_icon = "⏳"
+                            box_thickness = 2
+                        elif "Unknown" in name:
+                            color = (255, 165, 0)  # Blue-orange for unknown
+                            status_icon = "❓"
+                            box_thickness = 2
                         else:
-                            color = (0, 255, 0)  # Green for verified live faces
+                            color = (0, 255, 0)  # Green for verified
+                            status_icon = "✓"
+                            box_thickness = 3
                         
-                        # Draw main rectangle
-                        cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
+                        # Draw main rectangle with variable thickness
+                        cv2.rectangle(frame, (left, top), (right, bottom), color, box_thickness)
                         
-                        # Draw name box
-                        cv2.rectangle(frame, (left, bottom - 35), (right, bottom), color, cv2.FILLED)
-                        font = cv2.FONT_HERSHEY_DUPLEX
-                        cv2.putText(frame, name, (left + 6, bottom - 6), font, 0.5, (255, 255, 255), 1)
+                        # Draw corner accents for modern look
+                        corner_length = 20
+                        # Top-left
+                        cv2.line(frame, (left, top), (left + corner_length, top), color, box_thickness + 1)
+                        cv2.line(frame, (left, top), (left, top + corner_length), color, box_thickness + 1)
+                        # Top-right
+                        cv2.line(frame, (right, top), (right - corner_length, top), color, box_thickness + 1)
+                        cv2.line(frame, (right, top), (right, top + corner_length), color, box_thickness + 1)
+                        # Bottom-left
+                        cv2.line(frame, (left, bottom), (left + corner_length, bottom), color, box_thickness + 1)
+                        cv2.line(frame, (left, bottom), (left, bottom - corner_length), color, box_thickness + 1)
+                        # Bottom-right
+                        cv2.line(frame, (right, bottom), (right - corner_length, bottom), color, box_thickness + 1)
+                        cv2.line(frame, (right, bottom), (right, bottom - corner_length), color, box_thickness + 1)
                         
-                        # Draw debug info above the face (if available)
+                        # Draw enhanced name label with icon
+                        font = cv2.FONT_HERSHEY_SIMPLEX
+                        font_scale = 0.7
+                        font_thickness = 2
+                        label_text = f"{status_icon} {name}"
+                        
+                        # Calculate text size for proper background
+                        text_size = cv2.getTextSize(label_text, font, font_scale, font_thickness)[0]
+                        label_height = text_size[1] + 16
+                        
+                        # Draw semi-transparent background
+                        overlay = frame.copy()
+                        cv2.rectangle(overlay, (left, bottom - label_height), (right, bottom), color, cv2.FILLED)
+                        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+                        
+                        # Draw text with shadow for better readability
+                        text_y = bottom - 8
+                        # Shadow
+                        cv2.putText(frame, label_text, (left + 9, text_y + 1), font, font_scale, (0, 0, 0), font_thickness)
+                        # Main text
+                        cv2.putText(frame, label_text, (left + 8, text_y), font, font_scale, (255, 255, 255), font_thickness)
+                        
+                        # Draw enhanced debug info above the face
                         if debug:
-                            y_offset = top - 10
-                            font_scale = 0.4
+                            y_offset = top - 15
+                            font_scale = 0.5
                             thickness = 1
                             
-                            # Show key metrics
+                            # Show key metrics with color coding
                             metrics = []
-                            if 'liveness_score' in debug:
-                                metrics.append(f"Live:{debug['liveness_score']:.1f}")
-                            if 'spoof_score' in debug:
-                                metrics.append(f"Spf:{debug['spoof_score']:.1f}")
-                            if 'depth_score' in debug:
-                                metrics.append(f"Dep:{debug['depth_score']:.1f}")
-                            if 'blinks' in debug:
-                                metrics.append(f"Blk:{debug['blinks']}")
-                            if 'positive_indicators' in debug:
-                                metrics.append(f"PI:{debug['positive_indicators']}")
+                            if 'biometric_score' in debug:
+                                bio_score = debug['biometric_score']
+                                bio_color = (0, 255, 0) if bio_score > 0 else (0, 0, 255)
+                                metrics.append((f"Bio: {bio_score:.1f}", bio_color))
+                            if 'avg_contrast' in debug:
+                                contrast = debug['avg_contrast']
+                                contrast_color = (0, 0, 255) if contrast > 2.0 else (255, 255, 0)
+                                metrics.append((f"Contrast: {contrast:.1f}", contrast_color))
+                            if 'avg_brightness' in debug:
+                                brightness = debug['avg_brightness']
+                                bright_color = (0, 0, 255) if brightness > 2.0 else (255, 255, 0)
+                                metrics.append((f"Bright: {brightness:.1f}", bright_color))
+                            if 'distance_category' in debug:
+                                dist = debug['distance_category']
+                                dist_color = (0, 255, 0) if dist == 'normal' else (0, 165, 255)
+                                metrics.append((f"Distance: {dist}", dist_color))
                             
-                            # Draw each metric line
-                            for metric in metrics:
-                                # Black background for readability
-                                text_size = cv2.getTextSize(metric, font, font_scale, thickness)[0]
-                                cv2.rectangle(frame, (left, y_offset - text_size[1] - 4), 
-                                            (left + text_size[0] + 4, y_offset), (0, 0, 0), -1)
-                                cv2.putText(frame, metric, (left + 2, y_offset - 2), 
-                                          font, font_scale, (255, 255, 0), thickness)
-                                y_offset -= (text_size[1] + 6)
+                            # Draw each metric with styled background
+                            for metric_text, metric_color in metrics:
+                                text_size = cv2.getTextSize(metric_text, font, font_scale, thickness)[0]
+                                # Semi-transparent dark background
+                                overlay = frame.copy()
+                                cv2.rectangle(overlay, (left, y_offset - text_size[1] - 6), 
+                                            (left + text_size[0] + 8, y_offset + 2), (0, 0, 0), -1)
+                                cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+                                # Colored text
+                                cv2.putText(frame, metric_text, (left + 4, y_offset - 2), 
+                                          font, font_scale, metric_color, thickness)
+                                y_offset -= (text_size[1] + 10)
             
             return frame
             
@@ -1502,9 +1553,19 @@ class FaceRecognition:
                         elapsed = time.time() - start_time
                         fps_display = frame_count / elapsed
                     
-                    # Display FPS on frame
-                    cv2.putText(frame, f"FPS: {fps_display:.1f}", (10, 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    # Display enhanced FPS counter
+                    fps_text = f"FPS: {fps_display:.1f}"
+                    fps_color = (0, 255, 0) if fps_display > 20 else (0, 165, 255) if fps_display > 10 else (0, 0, 255)
+                    
+                    # Background for FPS
+                    fps_size = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (5, 5), (fps_size[0] + 20, fps_size[1] + 20), (0, 0, 0), -1)
+                    cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+                    
+                    # FPS text
+                    cv2.putText(frame, fps_text, (12, 28), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.8, fps_color, 2)
                     
                     cv2.imshow('Video', frame)
                     if cv2.waitKey(1) == ord('q'):
