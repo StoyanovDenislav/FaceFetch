@@ -227,16 +227,11 @@ def estimate_face_distance(face_location, frame_shape):
     face_size_ratio = face_area / frame_area
     
     # Categorize distance based on face size
-    # Normal face at comfortable distance: 8-20% of frame
-    # Too close (suspicious): >25% of frame
-    # Very close (phone held up): >35% of frame
+    # Normal face at comfortable distance: 8-12% of frame
+    # Too close (auto-lock): >=15% of frame
     
-    if face_size_ratio > 0.25:
-        return ("very_close", face_size_ratio, True)
-    elif face_size_ratio > 0.20:
-        return ("close", face_size_ratio, True)
-    elif face_size_ratio > 0.15:
-        return ("slightly_close", face_size_ratio, False)
+    if face_size_ratio >= 0.15:
+        return ("too_close", face_size_ratio, True)
     elif face_size_ratio > 0.08:
         return ("normal", face_size_ratio, False)
     else:
@@ -1221,63 +1216,63 @@ class FaceRecognition:
             # NO LOCK - Check for screen indicators
             rectangle_score = spoof_details.get('phone_rectangle', 0)
             
-            # CHECK PERSISTENT SCREEN STATE - If previously flagged as screen, stay blocked until cleared
+            # CHECK PERSISTENT SCREEN STATE - If previously flagged as too close, stay blocked until cleared
             if matched_id in self.screen_detected_state and self.screen_detected_state[matched_id]:
-                # Check if conditions met to CLEAR the screen state
-                # Must be: Far distance + Low brightness + Low contrast + Good biometric score
+                # Check if conditions met to CLEAR the state
+                # Must be: Not too close + Low brightness + Low contrast + Positive biometric
                 can_clear = (
-                    distance_category in ['normal', 'far'] and
-                    avg_brightness < 1.0 and
-                    avg_contrast < 1.0 and
-                    avg_biometric > 0.5
+                    not is_too_close and
+                    avg_brightness < 1.5 and
+                    avg_contrast < 1.5 and
+                    avg_biometric > 0.0
                 )
                 
                 if can_clear:
-                    # Clear the screen state - real person detected
+                    # Clear the state - real person detected
                     self.screen_detected_state[matched_id] = False
-                    print(f"  ✅ Screen state CLEARED | Distance:{distance_category} Bio:{avg_biometric:.1f}")
+                    print(f"  State CLEARED | Distance:{distance_category} Bio:{avg_biometric:.1f}")
                 else:
-                    # Still blocked - maintain screen detected state
+                    # Still blocked - maintain locked state
                     result['state'] = 'spoof'
-                    result['name'] = f"🚨 SCREEN BLOCKED (Awaiting Real Person)"
-                    print(f"  🔒 SCREEN BLOCKED | Distance:{distance_category} Bright:{avg_brightness:.1f} Contrast:{avg_contrast:.1f} Bio:{avg_biometric:.1f}")
+                    result['name'] = f"LOCKED - Too Close"
+                    print(f"  LOCKED | Distance:{distance_category} Size:{face_size_ratio:.0%} Bright:{avg_brightness:.1f} Contrast:{avg_contrast:.1f}")
                     return result, result['name']
             
-            # DETECT & SET SCREEN STATE - If face is too close AND high brightness/contrast (phone held up close)
-            if is_too_close and (avg_brightness >= 1.5 or avg_contrast >= 1.5):
-                # Set persistent screen state
+            # AUTO-LOCK - If face is 25% or more of frame (too close), lock system
+            if is_too_close:
+                # Set persistent locked state
                 self.screen_detected_state[matched_id] = True
                 self.screen_detection_counter[matched_id] = 0
                 
                 result['state'] = 'spoof'
-                result['name'] = f"🚨 SCREEN TOO CLOSE ({face_size_ratio:.0%})"
-                self.trigger_alert('spoof', f"Screen at close range - Distance:{distance_category} Bright:{avg_brightness:.1f} Contrast:{avg_contrast:.1f}", result)
-                print(f"  ❌ SCREEN TOO CLOSE | {distance_category} ({face_size_ratio:.1%}) Bright:{avg_brightness:.1f} Contrast:{avg_contrast:.1f}")
-                print(f"  🔒 Screen state SET - Will remain blocked until real person detected")
+                result['name'] = f"TOO CLOSE ({face_size_ratio:.0%})"
+                self.trigger_alert('spoof', f"Face too close - Distance:{distance_category} Size:{face_size_ratio:.0%}", result)
+                print(f"  TOO CLOSE LOCK | {distance_category} ({face_size_ratio:.1%})")
+                print(f"  State LOCKED - Awaiting real person at normal distance")
                 return result, result['name']
             
             # REJECT if high screen contrast detected (rolling average)
-            if avg_contrast >= 2.0:  # Lower threshold with rolling average
+            if avg_contrast >= 3.0:  # Higher threshold to reduce false positives
                 result['state'] = 'spoof'
-                result['name'] = f"🚨 SCREEN CONTRAST DETECTED"
+                result['name'] = f"Screen Contrast Detected"
                 self.trigger_alert('spoof', f"Screen contrast - Avg:{avg_contrast:.1f}", result)
-                print(f"  ❌ SCREEN CONTRAST | Avg:{avg_contrast:.1f}")
+                print(f"  SCREEN CONTRAST | Avg:{avg_contrast:.1f}")
                 return result, result['name']
             
             # REJECT if screen brightness detected (rolling average)
-            if avg_brightness >= 2.0:  # Lower threshold with rolling average
+            if avg_brightness >= 2.5:  # Balanced threshold for screen detection
                 result['state'] = 'spoof'
-                result['name'] = f"🚨 SCREEN BRIGHTNESS DETECTED"
+                result['name'] = f"Screen Brightness Detected"
                 self.trigger_alert('spoof', f"Screen brightness - Avg:{avg_brightness:.1f}", result)
-                print(f"  ❌ SCREEN BRIGHTNESS | Avg:{avg_brightness:.1f}")
+                print(f"  SCREEN BRIGHTNESS | Avg:{avg_brightness:.1f}")
                 return result, result['name']
             
-            # Use rolling average for smoother detection (threshold: 1.5 - lower since we're now more accurate)
-            if avg_spoof_score >= 1.5:
+            # Use rolling average for smoother detection (threshold: 4.0 for phone rectangle - very strict)
+            if avg_spoof_score >= 4.0:
                 result['state'] = 'spoof'
-                result['name'] = f"🚨 PHONE DETECTED 🚨"
-                self.trigger_alert('spoof', f"PHONE RECTANGLE - avg:{avg_spoof_score:.1f}", result)
-                print(f"  📱 PHONE | Current:{spoof_score:.1f} Avg:{avg_spoof_score:.1f} Rect:{rectangle_score:.1f} | Contrast:{avg_contrast:.1f} Bright:{avg_brightness:.1f}")
+                result['name'] = f"Phone Detected"
+                self.trigger_alert('spoof', f"Phone detected - avg:{avg_spoof_score:.1f}", result)
+                print(f"  PHONE | Current:{spoof_score:.1f} Avg:{avg_spoof_score:.1f} Rect:{rectangle_score:.1f} | Contrast:{avg_contrast:.1f} Bright:{avg_brightness:.1f}")
                 return result, result['name']
             
             # If spoof score is low, accept the face
@@ -1425,21 +1420,21 @@ class FaceRecognition:
                         left *= 4
                         
                         # Enhanced visual feedback with better colors and status indicators
-                        if "PHOTO" in name or "SCREEN" in name or "SPOOF" in name or "BLOCKED" in name:
+                        if "PHOTO" in name or "Screen" in name or "SPOOF" in name or "LOCKED" in name or "TOO CLOSE" in name or "Phone" in name:
                             color = (0, 0, 255)  # Red for spoof/blocked
-                            status_icon = "⛔"
+                            status_icon = "BLOCKED"
                             box_thickness = 3
                         elif "Move" in name or "BLINK" in name or "Verifying" in name:
                             color = (0, 165, 255)  # Orange for verification
-                            status_icon = "⏳"
+                            status_icon = "VERIFY"
                             box_thickness = 2
                         elif "Unknown" in name:
                             color = (255, 165, 0)  # Blue-orange for unknown
-                            status_icon = "❓"
+                            status_icon = "UNKNOWN"
                             box_thickness = 2
                         else:
                             color = (0, 255, 0)  # Green for verified
-                            status_icon = "✓"
+                            status_icon = "OK"
                             box_thickness = 3
                         
                         # Draw main rectangle with variable thickness
@@ -1490,22 +1485,24 @@ class FaceRecognition:
                             
                             # Show key metrics with color coding
                             metrics = []
-                            if 'biometric_score' in debug:
-                                bio_score = debug['biometric_score']
+                            bio_details = debug.get('biometric_details', {})
+                            
+                            if 'avg_biometric' in debug:
+                                bio_score = debug['avg_biometric']
                                 bio_color = (0, 255, 0) if bio_score > 0 else (0, 0, 255)
                                 metrics.append((f"Bio: {bio_score:.1f}", bio_color))
-                            if 'avg_contrast' in debug:
-                                contrast = debug['avg_contrast']
+                            if 'avg_contrast' in bio_details:
+                                contrast = bio_details['avg_contrast']
                                 contrast_color = (0, 0, 255) if contrast > 2.0 else (255, 255, 0)
                                 metrics.append((f"Contrast: {contrast:.1f}", contrast_color))
-                            if 'avg_brightness' in debug:
-                                brightness = debug['avg_brightness']
+                            if 'avg_brightness' in bio_details:
+                                brightness = bio_details['avg_brightness']
                                 bright_color = (0, 0, 255) if brightness > 2.0 else (255, 255, 0)
                                 metrics.append((f"Bright: {brightness:.1f}", bright_color))
-                            if 'distance_category' in debug:
-                                dist = debug['distance_category']
+                            if 'distance_category' in bio_details:
+                                dist = bio_details['distance_category']
                                 dist_color = (0, 255, 0) if dist == 'normal' else (0, 165, 255)
-                                metrics.append((f"Distance: {dist}", dist_color))
+                                metrics.append((f"Dist: {dist}", dist_color))
                             
                             # Draw each metric with styled background
                             for metric_text, metric_color in metrics:
