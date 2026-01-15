@@ -581,7 +581,7 @@ def check_lighting_consistency(gray):
     
     return score
 
-def detect_phone_rectangle(face_roi):
+def detect_phone_rectangle(face_roi, visualize=False):
     """Detect if the detected face appears to be displayed on a screen (any rectangle = phone/screen)"""
     gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape
@@ -593,13 +593,16 @@ def detect_phone_rectangle(face_roi):
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     
     score = 0
+    rectangles_found = 0
+    detected_rectangles = []  # Store all detected rectangles for visualization
+    glasses_rectangles = []  # Store filtered glasses rectangles
     
     # Since we already detected a face, ANY rectangle in the frame suggests it's on a screen
     for contour in contours:
         area = cv2.contourArea(contour)
         
-        # Skip tiny contours
-        if area < 300:
+        # Skip tiny contours (glasses lenses are typically small)
+        if area < 500:
             continue
         
         # Get bounding rectangle
@@ -617,24 +620,44 @@ def detect_phone_rectangle(face_roi):
             rect_area = w_rect * h_rect
             rectangularity = area / rect_area if rect_area > 0 else 0
             
-            # Phone-like rectangle characteristics
-            if rectangularity > 0.75 and 0.4 < aspect_ratio < 2.5:
-                area_ratio = area / (w * h)
-                
-                # Any significant rectangle (15% or more of the face ROI) is suspicious
-                # A face displayed on phone will have screen edges visible
-                if area_ratio > 0.15:
-                    score += 3.0  # Strong indicator
-                    print(f"    ⚠️  Rectangle in face ROI: {area_ratio:.2%} of frame, rectangularity={rectangularity:.2f}")
-                    break
+            # Calculate area as percentage of face ROI
+            area_ratio = area / (w * h)
+            
+            # FILTER OUT GLASSES:
+            # - Glasses are small (< 10% of face ROI)
+            # - Glasses have specific aspect ratios (1.5-3.0, wider than tall)
+            # - Glasses are in upper portion of face (y < h/2)
+            is_glasses_like = (
+                area_ratio < 0.10 and  # Small relative to face
+                1.2 < aspect_ratio < 3.5 and  # Wider than tall (glasses shape)
+                y < h * 0.6  # Upper portion of face
+            )
+            
+            if is_glasses_like:
+                glasses_rectangles.append({
+                    'x': x, 'y': y, 'w': w_rect, 'h': h_rect
+                })
+                continue  # Skip glasses
+            
+            # Phone-like rectangle characteristics:
+            # - Must be larger (at least 20% of face ROI)
+            # - Good rectangularity (> 0.8)
+            # - Phone-like aspect ratio
+            if rectangularity > 0.80 and 0.5 < aspect_ratio < 2.0 and area_ratio > 0.20:
+                detected_rectangles.append({
+                    'x': x, 'y': y, 'w': w_rect, 'h': h_rect,
+                    'area_ratio': area_ratio, 'aspect_ratio': aspect_ratio
+                })
+                score += 1.5
+                rectangles_found += 1
     
     # Also check for parallel straight lines (screen bezels)
     lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=35, minLineLength=int(min(w,h)*0.3), maxLineGap=10)
     
+    h_lines = []
+    v_lines = []
+    
     if lines is not None:
-        h_lines = []
-        v_lines = []
-        
         for line in lines:
             x1, y1, x2, y2 = line[0]
             length = np.sqrt((x2-x1)**2 + (y2-y1)**2)
@@ -646,10 +669,10 @@ def detect_phone_rectangle(face_roi):
             
             # Horizontal (±12 degrees for tolerance)
             if angle < 12 or angle > 168:
-                h_lines.append(length)
-            # Vertical (90 ±12 degrees)
+                h_lines.append((x1, y1, x2, y2))
+            # Vertical (90° ±12 degrees)
             elif 78 < angle < 102:
-                v_lines.append(length)
+                v_lines.append((x1, y1, x2, y2))
         
         # Phones have parallel edges
         if len(h_lines) >= 2 and len(v_lines) >= 2:
@@ -658,9 +681,19 @@ def detect_phone_rectangle(face_roi):
         elif len(h_lines) >= 1 and len(v_lines) >= 1:
             score += 1.0
     
-    return score
+    # Return detection data for drawing on main frame
+    detection_data = {
+        'score': score,
+        'rectangles': detected_rectangles,
+        'glasses': glasses_rectangles,
+        'h_lines': h_lines,
+        'v_lines': v_lines,
+        'rectangles_found': rectangles_found
+    }
+    
+    return score, detection_data
 
-def detect_photo_spoof(frame, face_location, executor=None, camera_profile=None):
+def detect_photo_spoof(frame, face_location, executor=None, camera_profile=None, visualize=False):
     """SIMPLE: Just detect if there's a rectangular phone shape"""
     top, right, bottom, left = face_location
     # Scale back to original frame size
@@ -678,10 +711,10 @@ def detect_photo_spoof(frame, face_location, executor=None, camera_profile=None)
     
     face_roi = frame[top:bottom, left:right]
     if face_roi.size == 0:
-        return (False, 0.0, {})
+        return (False, 0.0, {}, None)
     
     # SINGLE DETECTION: Look for phone rectangle
-    rectangle_score = detect_phone_rectangle(face_roi)
+    rectangle_score, detection_data = detect_phone_rectangle(face_roi, visualize=visualize)
     
     scores = {
         'phone_rectangle': rectangle_score,
@@ -702,7 +735,7 @@ def detect_photo_spoof(frame, face_location, executor=None, camera_profile=None)
         print(f"  Rectangle Score: {rectangle_score:.2f}")
         print("=" * 40)
     
-    return (is_spoof, weighted_total, scores)
+    return (is_spoof, weighted_total, scores, detection_data)
     
 def check_parallax_motion(frame, face_location, prev_frame=None, prev_location=None):
     """Check for parallax effect - 3D objects show differential motion"""
@@ -1095,8 +1128,7 @@ class FaceRecognition:
             if len(self.frame_history[matched_id]) > 10:
                 self.frame_history[matched_id] = self.frame_history[matched_id][-10:]
             
-            # BIOMETRIC ANALYSIS - Run after sufficient history
-            biometric_score = 0
+            # SCREEN DETECTION ANALYSIS
             biometric_details = {}
             
             # DISTANCE ESTIMATION - Check if face is too close (phone being held up)
@@ -1104,20 +1136,6 @@ class FaceRecognition:
             biometric_details['distance_category'] = distance_category
             biometric_details['face_size_ratio'] = face_size_ratio
             biometric_details['is_too_close'] = is_too_close
-            
-            # SCREEN CONTRAST - Detect artificial contrast patterns
-            contrast_score = detect_screen_contrast(face_roi)
-            biometric_details['screen_contrast'] = contrast_score
-            
-            # Track contrast with rolling average (5 frames)
-            if matched_id not in self.contrast_score_history:
-                self.contrast_score_history[matched_id] = []
-            self.contrast_score_history[matched_id].append(contrast_score)
-            if len(self.contrast_score_history[matched_id]) > 5:
-                self.contrast_score_history[matched_id] = self.contrast_score_history[matched_id][-5:]
-            avg_contrast = np.mean(self.contrast_score_history[matched_id]) if self.contrast_score_history[matched_id] else 0
-            biometric_details['avg_contrast'] = avg_contrast
-            biometric_score -= avg_contrast  # Use averaged score
             
             # SCREEN BRIGHTNESS - Detect screen emission vs reflected light
             brightness_score = detect_screen_brightness(face_roi)
@@ -1131,111 +1149,51 @@ class FaceRecognition:
                 self.brightness_score_history[matched_id] = self.brightness_score_history[matched_id][-5:]
             avg_brightness = np.mean(self.brightness_score_history[matched_id]) if self.brightness_score_history[matched_id] else 0
             biometric_details['avg_brightness'] = avg_brightness
-            biometric_score -= avg_brightness  # Use averaged score
             
-            # If face is too close, increase weight of brightness/contrast checks
+            # If face is too close, log it
             if is_too_close:
                 print(f"    ⚠️  Face too close ({face_size_ratio:.1%} of frame) - Distance: {distance_category}")
-                # When face is very close (phone held up), prioritize brightness/contrast detection
-                biometric_score -= (avg_brightness * 0.5 + avg_contrast * 0.5)  # Extra penalty
-            
-            if len(self.face_roi_history.get(matched_id, [])) >= 30:
-                # Pulse detection
-                pulse_score = detect_pulse(self.face_roi_history, matched_id)
-                biometric_details['pulse'] = pulse_score
-                biometric_score += pulse_score
-                
-                # Micro-movement detection
-                movement_score = detect_micro_movements(self.landmarks_history, matched_id)
-                biometric_details['micro_movement'] = movement_score
-                biometric_score += movement_score
-            
-            if len(self.frame_history.get(matched_id, [])) >= 10:
-                # Temporal consistency
-                temporal_score = check_temporal_consistency(self.frame_history, matched_id)
-                biometric_details['temporal'] = temporal_score
-                biometric_score += temporal_score
-            
-            # Track biometric scores with rolling average
-            if matched_id not in self.biometric_scores:
-                self.biometric_scores[matched_id] = []
-            self.biometric_scores[matched_id].append(biometric_score)
-            if len(self.biometric_scores[matched_id]) > 10:
-                self.biometric_scores[matched_id] = self.biometric_scores[matched_id][-10:]
-            
-            avg_biometric = np.mean(self.biometric_scores[matched_id]) if self.biometric_scores[matched_id] else 0
             
             # Get previous frame data for depth detection
             prev_frame = self.prev_frame
             prev_location = self.prev_locations.get(face_key)
             
-            # Run all detection checks in parallel using thread pool
+            # Run depth detection check
             is_3d, depth_score, depth_details = detect_3d_depth(
                 frame, face_location, prev_frame, prev_location, executor=self.executor
             )
             
-            is_spoof, spoof_score, spoof_details = detect_photo_spoof(
-                frame, face_location, executor=self.executor
-            )
-            
             # Store debug info
             result['debug'] = {
-                'spoof_score': spoof_score,
                 'depth_score': depth_score,
-                'spoof_details': spoof_details,
                 'depth_details': depth_details,
-                'biometric_score': biometric_score,
                 'biometric_details': biometric_details,
-                'avg_biometric': avg_biometric,
             }
             
-            # TEMPORAL SMOOTHING - Track spoof scores over time to prevent flickering
-            if face_key not in self.spoof_score_history:
-                self.spoof_score_history[face_key] = []
-            
-            # Add current score to history
-            self.spoof_score_history[face_key].append(spoof_score)
-            
-            # Keep only last 5 frames for faster response
-            if len(self.spoof_score_history[face_key]) > 5:
-                self.spoof_score_history[face_key] = self.spoof_score_history[face_key][-5:]
-            
-            # Calculate rolling average over last 5 frames
-            avg_spoof_score = np.mean(self.spoof_score_history[face_key])
-            
-            result['debug']['avg_spoof_score'] = avg_spoof_score
-            result['debug']['spoof_score'] = spoof_score
-            
             # Get screen indicators (using rolling averages)
-            avg_contrast = biometric_details.get('avg_contrast', 0)
             avg_brightness = biometric_details.get('avg_brightness', 0)
             is_too_close = biometric_details.get('is_too_close', False)
             distance_category = biometric_details.get('distance_category', 'normal')
             face_size_ratio = biometric_details.get('face_size_ratio', 0)
             
-            # NO LOCK - Check for screen indicators
-            rectangle_score = spoof_details.get('phone_rectangle', 0)
-            
             # CHECK PERSISTENT SCREEN STATE - If previously flagged as too close, stay blocked until cleared
             if matched_id in self.screen_detected_state and self.screen_detected_state[matched_id]:
                 # Check if conditions met to CLEAR the state
-                # Must be: Not too close + Low brightness + Low contrast + Positive biometric
+                # Must be: Not too close + Low brightness
                 can_clear = (
                     not is_too_close and
-                    avg_brightness < 1.5 and
-                    avg_contrast < 1.5 and
-                    avg_biometric > 0.0
+                    avg_brightness < 1.5
                 )
                 
                 if can_clear:
                     # Clear the state - real person detected
                     self.screen_detected_state[matched_id] = False
-                    print(f"  State CLEARED | Distance:{distance_category} Bio:{avg_biometric:.1f}")
+                    print(f"  State CLEARED | Distance:{distance_category}")
                 else:
                     # Still blocked - maintain locked state
                     result['state'] = 'spoof'
                     result['name'] = f"LOCKED - Too Close"
-                    print(f"  LOCKED | Distance:{distance_category} Size:{face_size_ratio:.0%} Bright:{avg_brightness:.1f} Contrast:{avg_contrast:.1f}")
+                    print(f"  LOCKED | Distance:{distance_category} Size:{face_size_ratio:.0%} Bright:{avg_brightness:.1f}")
                     return result, result['name']
             
             # AUTO-LOCK - If face is 25% or more of frame (too close), lock system
@@ -1251,28 +1209,12 @@ class FaceRecognition:
                 print(f"  State LOCKED - Awaiting real person at normal distance")
                 return result, result['name']
             
-            # REJECT if high screen contrast detected (rolling average)
-            if avg_contrast >= 3.0:  # Higher threshold to reduce false positives
-                result['state'] = 'spoof'
-                result['name'] = f"Screen Contrast Detected"
-                self.trigger_alert('spoof', f"Screen contrast - Avg:{avg_contrast:.1f}", result)
-                print(f"  SCREEN CONTRAST | Avg:{avg_contrast:.1f}")
-                return result, result['name']
-            
             # REJECT if screen brightness detected (rolling average)
-            if avg_brightness >= 2.5:  # Balanced threshold for screen detection
+            if avg_brightness >= 1.2:  # Sensitive threshold for screen detection
                 result['state'] = 'spoof'
                 result['name'] = f"Screen Brightness Detected"
                 self.trigger_alert('spoof', f"Screen brightness - Avg:{avg_brightness:.1f}", result)
                 print(f"  SCREEN BRIGHTNESS | Avg:{avg_brightness:.1f}")
-                return result, result['name']
-            
-            # Use rolling average for smoother detection (threshold: 4.0 for phone rectangle - very strict)
-            if avg_spoof_score >= 4.0:
-                result['state'] = 'spoof'
-                result['name'] = f"Phone Detected"
-                self.trigger_alert('spoof', f"Phone detected - avg:{avg_spoof_score:.1f}", result)
-                print(f"  PHONE | Current:{spoof_score:.1f} Avg:{avg_spoof_score:.1f} Rect:{rectangle_score:.1f} | Contrast:{avg_contrast:.1f} Bright:{avg_brightness:.1f}")
                 return result, result['name']
             
             # If spoof score is low, accept the face
@@ -1487,14 +1429,6 @@ class FaceRecognition:
                             metrics = []
                             bio_details = debug.get('biometric_details', {})
                             
-                            if 'avg_biometric' in debug:
-                                bio_score = debug['avg_biometric']
-                                bio_color = (0, 255, 0) if bio_score > 0 else (0, 0, 255)
-                                metrics.append((f"Bio: {bio_score:.1f}", bio_color))
-                            if 'avg_contrast' in bio_details:
-                                contrast = bio_details['avg_contrast']
-                                contrast_color = (0, 0, 255) if contrast > 2.0 else (255, 255, 0)
-                                metrics.append((f"Contrast: {contrast:.1f}", contrast_color))
                             if 'avg_brightness' in bio_details:
                                 brightness = bio_details['avg_brightness']
                                 bright_color = (0, 0, 255) if brightness > 2.0 else (255, 255, 0)
