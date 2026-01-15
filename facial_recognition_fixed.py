@@ -394,7 +394,7 @@ class FaceRecognition:
                     print(f"  Loading {image_file}...")
                     face_image = face_recognition.load_image_file(f'{known_faces_dir}/{image_file}')
                     print(f"  Encoding {image_file}...")
-                    encodings = face_recognition.face_encodings(face_image, model="large")
+                    encodings = face_recognition.face_encodings(face_image, model="small")
                     if encodings:
                         print(f"  ✓ Successfully encoded {image_file}")
                         return (encodings[0], image_file)
@@ -528,20 +528,7 @@ class FaceRecognition:
             # Use persistent ID for history tracking
             face_key = matched_id
             
-            # Get facial landmarks for blink detection and head pose
-            face_landmarks_list = face_recognition.face_landmarks(rgb_small_frame, [face_location])
-            face_landmarks = face_landmarks_list[0] if face_landmarks_list else None
-            
-            # Store landmarks history
-            if face_key not in self.landmarks_history:
-                self.landmarks_history[face_key] = []
-            if face_landmarks:
-                self.landmarks_history[face_key].append(face_landmarks)
-                # Keep last 30 frames
-                if len(self.landmarks_history[face_key]) > 30:
-                    self.landmarks_history[face_key] = self.landmarks_history[face_key][-30:]
-            
-            # Store face ROI for biometric analysis (pulse detection)
+            # Store face ROI for tracking
             if matched_id not in self.face_roi_history:
                 self.face_roi_history[matched_id] = []
             
@@ -720,15 +707,10 @@ class FaceRecognition:
                 # Face detection
                 self.face_locations = face_recognition.face_locations(rgb_small_frame, model="hog")
                 
-                # Store current frame for next iteration's depth detection
-                if self.face_locations:
-                    with self.lock:
-                        self.prev_frame = frame.copy()
-                
                 # Get encodings in parallel if we have multiple faces
                 if len(self.face_locations) > 1:
                     def get_encoding(face_loc):
-                        encodings = face_recognition.face_encodings(rgb_small_frame, [face_loc], model="large")
+                        encodings = face_recognition.face_encodings(rgb_small_frame, [face_loc], model="small")
                         return encodings[0] if encodings else None
                     
                     # Parallel encoding
@@ -738,7 +720,7 @@ class FaceRecognition:
                     # Single face - no need for parallel processing overhead
                     self.face_encodings = []
                     for face_location in self.face_locations:
-                        encodings = face_recognition.face_encodings(rgb_small_frame, [face_location], model="large")
+                        encodings = face_recognition.face_encodings(rgb_small_frame, [face_location], model="small")
                         if encodings:
                             self.face_encodings.append(encodings[0])
              
@@ -800,7 +782,8 @@ class FaceRecognition:
                     
                     for key in keys_to_remove:
                         del self.face_history[key]
-                
+            
+            # Toggle frame processing - process every other frame for better FPS
             self.process_current_frame = not self.process_current_frame
             
             # Draw annotations if requested
