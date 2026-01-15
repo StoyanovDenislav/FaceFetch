@@ -1160,31 +1160,40 @@ class FaceRecognition:
                 print(f"⚠️  No face images found in '{known_faces_dir}'")
                 return
             
-            print(f"📸 Loading {len(image_files)} known faces in parallel...")
+            print(f"📸 Loading {len(image_files)} known faces...")
             
             def load_and_encode(image_file):
                 """Load and encode a single face image"""
                 try:
+                    print(f"  Loading {image_file}...")
                     face_image = face_recognition.load_image_file(f'{known_faces_dir}/{image_file}')
+                    print(f"  Encoding {image_file}...")
                     encodings = face_recognition.face_encodings(face_image, model="large")
                     if encodings:
+                        print(f"  ✓ Successfully encoded {image_file}")
                         return (encodings[0], image_file)
+                    else:
+                        print(f"  ⚠️  No face found in {image_file}")
                     return None
                 except Exception as e:
-                    print(f"⚠️  Error loading {image_file}: {e}")
+                    print(f"  ❌ Error loading {image_file}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     return None
             
-            # Use thread pool to load faces in parallel
-            futures = [self.executor.submit(load_and_encode, img) for img in image_files]
-            
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    encoding, name = result
-                    self.known_face_encodings.append(encoding)
-                    self.known_face_names.append(name)
+            # Process faces sequentially to avoid thread pool issues
+            for img in image_files:
+                try:
+                    result = load_and_encode(img)
+                    if result:
+                        encoding, name = result
+                        self.known_face_encodings.append(encoding)
+                        self.known_face_names.append(name)
+                except Exception as e:
+                    print(f"  ❌ Failed to process {img}: {e}")
+                    continue
                 
-            print(f"✅ Loaded faces: {self.known_face_names}")
+            print(f"✅ Loaded {len(self.known_face_names)} faces: {self.known_face_names}\n")
             
         def trigger_alert(self, alert_type, message, face_data=None):
             """
