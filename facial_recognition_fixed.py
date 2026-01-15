@@ -389,10 +389,11 @@ def detect_screen_contrast(face_roi):
         print(f"    ⚠️  Contrast detection error: {e}")
         return 0
 
-def detect_screen_brightness(face_roi):
+def detect_screen_brightness(face_roi, background_roi=None):
     """
     Analyze brightness levels - screens emit light (bright), real faces reflect (dimmer).
     Screens have artificially high and uniform brightness.
+    Also checks relative brightness vs background - screens are brighter than environment even at low brightness.
     """
     try:
         # Convert to LAB color space for accurate luminance analysis
@@ -413,7 +414,9 @@ def detect_screen_brightness(face_roi):
         rgb_brightness = np.mean(gray)
         
         score = 0
+        relative_score = 0
         
+        # ABSOLUTE BRIGHTNESS CHECK
         # Screens characteristics:
         # 1. Very high mean brightness (>170 in LAB L channel)
         # 2. Low std (uniform backlight)
@@ -438,11 +441,51 @@ def detect_screen_brightness(face_roi):
             score += 1.0
             print(f"    🔴 High bright pixel ratio: {bright_ratio:.2%}")
         
-        return min(score, 5.0)
+        # RELATIVE BRIGHTNESS CHECK (vs background)
+        if background_roi is not None and background_roi.size > 0:
+            try:
+                # Analyze background brightness
+                bg_lab = cv2.cvtColor(background_roi, cv2.COLOR_BGR2LAB)
+                bg_l_channel = bg_lab[:, :, 0]
+                bg_mean_brightness = np.mean(bg_l_channel)
+                bg_std = np.std(bg_l_channel)
+                
+                # Calculate brightness difference
+                brightness_diff = mean_brightness - bg_mean_brightness
+                brightness_ratio = mean_brightness / (bg_mean_brightness + 1e-10)
+                
+                # Screens are ALWAYS brighter than their environment
+                # Even at low brightness, a phone screen emits light while environment reflects it
+                # Real faces: similar brightness to environment (±20 points)
+                # Screens: 30-80+ points brighter than environment
+                
+                if brightness_diff > 40:  # Significantly brighter than environment
+                    relative_score += 3.0
+                    print(f"    🔴 Much brighter than environment: diff={brightness_diff:.1f}")
+                elif brightness_diff > 25:
+                    relative_score += 2.0
+                elif brightness_diff > 15:
+                    relative_score += 1.0
+                
+                # Also check ratio
+                if brightness_ratio > 1.3:  # 30% brighter
+                    relative_score += 1.5
+                elif brightness_ratio > 1.15:  # 15% brighter
+                    relative_score += 0.5
+                
+                # Uniformity check - screens are more uniform than natural environments
+                uniformity_diff = abs(brightness_std - bg_std)
+                if brightness_std < 20 and bg_std > 30:  # Face uniform, background varied
+                    relative_score += 1.0
+                    
+            except Exception as e:
+                pass  # Background analysis failed, use only absolute score
+        
+        return min(score, 5.0), min(relative_score, 5.0)
         
     except Exception as e:
         print(f"    ⚠️  Brightness detection error: {e}")
-        return 0
+        return 0, 0
 
 # Individual detection methods for parallel execution
 def check_moire_pattern(gray):
@@ -977,6 +1020,49 @@ class FaceRecognition:
                 profile['resolution'] = (width, height)
                 print(f"  ✓ Resolution: {width}x{height}")
                 
+                # LOCK CAMERA SETTINGS - Prevent auto-adjustment during operation
+                print("  🔒 Locking camera settings...")
+                
+                # Disable auto exposure
+                try:
+                    # Try to disable auto exposure (platform dependent)
+                    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # 0.25 = manual mode (some cameras)
+                    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)     # 1 = manual mode (other cameras)
+                    print("    ✓ Auto exposure disabled")
+                except:
+                    print("    ⚠️  Could not disable auto exposure")
+                
+                # Get current exposure and lock it
+                current_exposure = cap.get(cv2.CAP_PROP_EXPOSURE)
+                if current_exposure != -1:
+                    cap.set(cv2.CAP_PROP_EXPOSURE, current_exposure)
+                    profile['locked_exposure'] = current_exposure
+                    print(f"    ✓ Locked exposure: {current_exposure}")
+                
+                # Disable auto white balance
+                try:
+                    cap.set(cv2.CAP_PROP_AUTO_WB, 0)  # 0 = disable
+                    print("    ✓ Auto white balance disabled")
+                except:
+                    print("    ⚠️  Could not disable auto white balance")
+                
+                # Lock brightness
+                current_brightness = cap.get(cv2.CAP_PROP_BRIGHTNESS)
+                if current_brightness != -1:
+                    cap.set(cv2.CAP_PROP_BRIGHTNESS, current_brightness)
+                    profile['locked_brightness'] = current_brightness
+                    print(f"    ✓ Locked brightness: {current_brightness}")
+                
+                # Lock gain
+                current_gain = cap.get(cv2.CAP_PROP_GAIN)
+                if current_gain != -1:
+                    cap.set(cv2.CAP_PROP_GAIN, current_gain)
+                    profile['locked_gain'] = current_gain
+                    print(f"    ✓ Locked gain: {current_gain}")
+                
+                # Store locked settings
+                profile['settings_locked'] = True
+                
                 # Try to get focal length (not all cameras support this)
                 focal_length = cap.get(cv2.CAP_PROP_FOCUS)
                 if focal_length > 0:
@@ -1232,6 +1318,33 @@ class FaceRecognition:
             right_scaled = min(frame.shape[1], right * 4 + 10)
             face_roi = frame[top_scaled:bottom_scaled, left_scaled:right_scaled]
             
+            # Extract background ROI (area around face but not face itself)
+            # Get regions to the left, right, top, bottom of face
+            h, w = frame.shape[:2]
+            margin = 50  # pixels around face for background sampling
+            
+            # Sample from sides and top (avoid bottom which might be neck/clothing)
+            bg_samples = []
+            # Left side
+            if left_scaled > margin:
+                bg_samples.append(frame[top_scaled:bottom_scaled, max(0, left_scaled-margin):left_scaled])
+            # Right side  
+            if right_scaled + margin < w:
+                bg_samples.append(frame[top_scaled:bottom_scaled, right_scaled:min(w, right_scaled+margin)])
+            # Top
+            if top_scaled > margin:
+                bg_samples.append(frame[max(0, top_scaled-margin):top_scaled, left_scaled:right_scaled])
+            
+            # Combine background samples
+            background_roi = None
+            if bg_samples:
+                try:
+                    # Concatenate all background samples
+                    background_roi = np.vstack([s.reshape(-1, s.shape[-1]) for s in bg_samples if s.size > 0])
+                    background_roi = background_roi.reshape(-1, background_roi.shape[0] // len(bg_samples[0]), 3)
+                except:
+                    background_roi = bg_samples[0] if bg_samples else None
+            
             self.face_roi_history[matched_id].append(face_roi.copy())
             if len(self.face_roi_history[matched_id]) > 30:
                 self.face_roi_history[matched_id] = self.face_roi_history[matched_id][-30:]
@@ -1253,17 +1366,20 @@ class FaceRecognition:
             biometric_details['is_too_close'] = is_too_close
             
             # SCREEN BRIGHTNESS - Detect screen emission vs reflected light
-            brightness_score = detect_screen_brightness(face_roi)
+            brightness_score, relative_brightness_score = detect_screen_brightness(face_roi, background_roi)
             biometric_details['screen_brightness'] = brightness_score
+            biometric_details['relative_brightness'] = relative_brightness_score
             
             # Track brightness with rolling average (5 frames)
             if matched_id not in self.brightness_score_history:
                 self.brightness_score_history[matched_id] = []
-            self.brightness_score_history[matched_id].append(brightness_score)
+            self.brightness_score_history[matched_id].append(brightness_score + relative_brightness_score)  # Combined score
             if len(self.brightness_score_history[matched_id]) > 5:
                 self.brightness_score_history[matched_id] = self.brightness_score_history[matched_id][-5:]
             avg_brightness = np.mean(self.brightness_score_history[matched_id]) if self.brightness_score_history[matched_id] else 0
             biometric_details['avg_brightness'] = avg_brightness
+            biometric_details['avg_absolute_brightness'] = brightness_score
+            biometric_details['avg_relative_brightness'] = relative_brightness_score
             
             # If face is too close, log it
             if is_too_close:
@@ -1551,8 +1667,10 @@ class FaceRecognition:
                             
                             if 'avg_brightness' in bio_details:
                                 brightness = bio_details['avg_brightness']
+                                abs_bright = bio_details.get('avg_absolute_brightness', 0)
+                                rel_bright = bio_details.get('avg_relative_brightness', 0)
                                 bright_color = (0, 0, 255) if brightness > 2.0 else (255, 255, 0)
-                                metrics.append((f"Bright: {brightness:.1f}", bright_color))
+                                metrics.append((f"B:{brightness:.1f}(A:{abs_bright:.1f}+R:{rel_bright:.1f})", bright_color))
                             if 'distance_category' in bio_details:
                                 dist = bio_details['distance_category']
                                 dist_color = (0, 255, 0) if dist == 'normal' else (0, 165, 255)
@@ -1583,6 +1701,40 @@ class FaceRecognition:
             
             if not video_capture.isOpened():
                 sys.exit("Error: Could not open video.")
+            
+            # Apply locked camera settings from calibration
+            if hasattr(self, 'camera_profile') and self.camera_profile.get('settings_locked', False):
+                print("\n🔒 Applying locked camera settings...")
+                
+                # Disable auto exposure
+                try:
+                    video_capture.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+                    video_capture.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+                except:
+                    pass
+                
+                # Apply locked exposure
+                if 'locked_exposure' in self.camera_profile:
+                    video_capture.set(cv2.CAP_PROP_EXPOSURE, self.camera_profile['locked_exposure'])
+                    print(f"  ✓ Exposure locked: {self.camera_profile['locked_exposure']}")
+                
+                # Disable auto white balance
+                try:
+                    video_capture.set(cv2.CAP_PROP_AUTO_WB, 0)
+                except:
+                    pass
+                
+                # Apply locked brightness
+                if 'locked_brightness' in self.camera_profile:
+                    video_capture.set(cv2.CAP_PROP_BRIGHTNESS, self.camera_profile['locked_brightness'])
+                    print(f"  ✓ Brightness locked: {self.camera_profile['locked_brightness']}")
+                
+                # Apply locked gain
+                if 'locked_gain' in self.camera_profile:
+                    video_capture.set(cv2.CAP_PROP_GAIN, self.camera_profile['locked_gain'])
+                    print(f"  ✓ Gain locked: {self.camera_profile['locked_gain']}")
+                
+                print("  ✅ Camera settings locked - brightness will not auto-adjust\n")
             
             # Performance monitoring
             frame_count = 0
