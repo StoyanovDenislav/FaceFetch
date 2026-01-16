@@ -11,6 +11,9 @@ pillow==12.1.0
 
 # Web server (Flask)
 Flask==3.1.2
+Flask-SQLAlchemy==3.1.1
+Flask-Login==0.6.3
+PyMySQL==1.1.1
 Werkzeug==3.1.4
 Jinja2==3.1.6
 click==8.3.1
