@@ -2,7 +2,8 @@
 Flask Web Server for Facial Recognition with Live Feed
 Connects to camera stream URL (never accesses USB directly)
 """
-from flask import Flask, render_template, Response, jsonify, request
+from flask import Flask, render_template, Response
+import pymysql
 import cv2
 import sys
 import time
@@ -17,6 +18,34 @@ load_dotenv()
 
 # Import the FaceRecognition class
 from facial_recognition_fixed import FaceRecognition
+
+# Import database from models
+from models import db, User, FaceProfile, Session, DetectionEvent, Command
+
+DB_USER = os.environ.get('DB_USER', 'root')
+DB_PASSWORD = os.environ.get('DB_PASSWORD', '')
+DB_HOST = os.environ.get('DB_HOST', 'localhost')
+DB_PORT = int(os.environ.get('DB_PORT', 3306))
+DB_NAME = os.environ.get('DB_NAME', 'facefetch')
+
+def ensure_database_exists():
+    """Ensure the database exists before connecting"""
+    try:
+        conn = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            port=DB_PORT
+        )
+        conn.autocommit(True)
+        cursor = conn.cursor()
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{DB_NAME}`")
+        cursor.close()
+        conn.close()
+        print(f"✅ Database '{DB_NAME}' ensured.")
+    except Exception as e:
+        print(f"❌ Database connection error: {e}")
+        raise
 
 # Camera stream configuration from .env
 # If CAMERA_STREAM_URL is set in .env, use it. Otherwise, default to localhost:1337
@@ -55,8 +84,7 @@ class FrameBuffer:
 
 class WebCamera:
     """
-    Camera wrapper that connects to camera stream URL ONLY
-    Never accesses USB camera directly - only web addresses
+    Camera wrapper that connects to camera stream URL with fallback to local USB camera
     Integrates with FaceRecognition for face detection
     """
     def __init__(self, face_recognition_instance):
@@ -74,30 +102,31 @@ class WebCamera:
         self.video_capture = None
         self.connected = False
         self.connection_error = None
+        self.camera_source = None  # 'network' or 'usb'
         
         # Start connection in background (non-blocking)
         self.connection_thread = threading.Thread(target=self._connect_to_stream, daemon=True)
         self.connection_thread.start()
     
     def _connect_to_stream(self):
-        """Connect to camera stream in background thread"""
-        # Build stream URL with token
+        """Connect to camera stream in background thread with USB fallback"""
+        # Try network stream first
         stream_url = CAMERA_STREAM_URL
         if CAMERA_STREAM_TOKEN:
             separator = '&' if '?' in stream_url else '?'
             stream_url = f"{stream_url}{separator}token={CAMERA_STREAM_TOKEN}"
-            print(f"\n🔗 Connecting to: {CAMERA_STREAM_URL}")
+            print(f"\n🔗 Connecting to network camera: {CAMERA_STREAM_URL}")
             print(f"   With token: {CAMERA_STREAM_TOKEN[:8]}...{CAMERA_STREAM_TOKEN[-4:]}")
             print(f"   Full URL: {stream_url[:50]}...")
         else:
-            print(f"\n🔗 Connecting to: {stream_url} (no auth)")
+            print(f"\n🔗 Connecting to network camera: {stream_url} (no auth)")
         
         print(f"\n🔍 Debug info:")
         print(f"   Attempting cv2.VideoCapture({stream_url[:60]}...)")
         print(f"   OpenCV version: {cv2.__version__}")
         
-        # Connect to camera stream - retry until success
-        max_retries = 60
+        # Try network camera - fewer retries since we have fallback
+        max_retries = 5
         retry_delay = 2
         
         for attempt in range(max_retries):
@@ -111,9 +140,10 @@ class WebCamera:
                     print(f"   Attempt {attempt + 1}: Frame read, ret={ret}, frame shape={frame.shape if ret else 'None'}")
                     
                     if ret and frame is not None:
-                        print(f"✅ Connected successfully on attempt {attempt + 1}!")
-                        print(f"   Camera found: usb_0 at localhost:1337")
+                        print(f"✅ Connected to network camera on attempt {attempt + 1}!")
+                        print(f"   Network camera: {CAMERA_STREAM_URL}")
                         self.connected = True
+                        self.camera_source = 'network'
                         self.start_threads()
                         return
                     else:
@@ -124,22 +154,57 @@ class WebCamera:
                     print(f"   Attempt {attempt + 1}: VideoCapture not opened")
                 
                 if attempt == 0:
-                    print(f"\n⚠️  First attempt failed - is camera_streamer.py running on port 1337?")
-                    print(f"⚠️  Web server is running, will keep trying to connect...\n")
+                    print(f"\n⚠️  Network camera connection failed - trying {max_retries} times before USB fallback\n")
                 
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                 
             except Exception as e:
                 print(f"   Attempt {attempt + 1}: Exception - {type(e).__name__}: {e}")
-                if attempt == 0:
-                    print(f"\n⚠️  Connection error: {e}")
-                    print(f"⚠️  Make sure camera_streamer.py is running!\n")
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
         
-        self.connection_error = f"Could not connect to {CAMERA_STREAM_URL} after {max_retries} attempts"
+        print(f"❌ Network camera connection failed after {max_retries} attempts")
+        print(f"\n🔄 Falling back to USB camera...\n")
+        
+        # Fallback to USB camera (index 0)
+        if self._connect_to_usb():
+            return
+        
+        # If both fail, set error
+        self.connection_error = f"Could not connect to network camera ({CAMERA_STREAM_URL}) or USB camera"
         print(f"❌ {self.connection_error}")
+    
+    def _connect_to_usb(self):
+        """Try to connect to USB camera as fallback"""
+        print("🔍 Attempting to connect to USB camera (index 0)...")
+        
+        try:
+            self.video_capture = cv2.VideoCapture(0)
+            
+            if self.video_capture.isOpened():
+                # Test read a frame
+                ret, frame = self.video_capture.read()
+                
+                if ret and frame is not None:
+                    print(f"✅ Connected to USB camera successfully!")
+                    print(f"   Camera: USB Camera 0 (Direct)")
+                    print(f"   Resolution: {frame.shape[1]}x{frame.shape[0]}")
+                    self.connected = True
+                    self.camera_source = 'usb'
+                    self.start_threads()
+                    return True
+                else:
+                    print(f"   Failed to read frame from USB camera")
+                    self.video_capture.release()
+                    self.video_capture = None
+            else:
+                print(f"   USB camera not opened")
+                
+        except Exception as e:
+            print(f"   USB camera error: {type(e).__name__}: {e}")
+        
+        return False
     
     def start_threads(self):
         """Start capture and processing threads"""
@@ -244,16 +309,44 @@ class WebCamera:
             self.video_capture.release()
 
 
-# Flask app
-app = Flask(__name__)
-app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-app.config['THREADED'] = True
+# Initialize Flask app with database
+def create_app():
+    """Create and configure Flask application"""
+    ensure_database_exists()
+    
+    app = Flask(__name__)
+    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', os.urandom(24))
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+    app.config['THREADED'] = True
+    
+    # Initialize database
+    db.init_app(app)
+    
+    with app.app_context():
+        db.create_all()
+        print("✅ Database tables created/verified")
+    
+    return app
 
+# Create Flask app
+app = create_app()
+
+# Global instances
 face_recognition = None
 camera = None
-detection_history = []
-MAX_HISTORY = 50
-history_lock = threading.Lock()
+
+# Register API blueprints
+from api.routes.detections import detections_bp, init_detections
+from api.routes.alerts import alerts_bp, init_alerts
+from api.routes.status import status_bp, init_status
+from api.routes.registration import registration_bp, init_registration
+
+app.register_blueprint(detections_bp, url_prefix='/api')
+app.register_blueprint(alerts_bp, url_prefix='/api')
+app.register_blueprint(status_bp, url_prefix='/api')
+app.register_blueprint(registration_bp, url_prefix='/api')
 
 @app.route('/')
 def index():
@@ -265,89 +358,6 @@ def video_feed():
     """Video streaming route"""
     return Response(camera.generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/api/detections')
-def get_detections():
-    """API endpoint for detection results (thread-safe)"""
-    global detection_history
-    
-    results = face_recognition.get_detection_results()
-    
-    # Add to history if there are faces detected
-    if results['total_faces'] > 0:
-        with history_lock:
-            for face in results['faces']:
-                # Create history entry
-                history_entry = {
-                    'timestamp': results['timestamp'],
-                    'face_id': face['face_id'],
-                    'state': face['state'],
-                    'name': face['name'],
-                    'confidence': face['confidence'],
-                    'is_live': face['is_live']
-                }
-                
-                # Add to history (avoid duplicates from same timestamp)
-                if not detection_history or detection_history[-1]['timestamp'] != results['timestamp']:
-                    detection_history.append(history_entry)
-            
-            # Keep only last MAX_HISTORY entries
-            if len(detection_history) > MAX_HISTORY:
-                detection_history = detection_history[-MAX_HISTORY:]
-    
-    return jsonify(results)
-
-@app.route('/api/history')
-def get_history():
-    """API endpoint for detection history (thread-safe)"""
-    with history_lock:
-        return jsonify({
-            'total_entries': len(detection_history),
-            'history': list(reversed(detection_history))  # Most recent first
-        })
-
-@app.route('/api/history/clear', methods=['POST'])
-def clear_history():
-    """Clear detection history (thread-safe)"""
-    global detection_history
-    with history_lock:
-        detection_history = []
-    return jsonify({'status': 'success', 'message': 'History cleared'})
-
-@app.route('/api/status')
-def get_status():
-    """API endpoint for system status"""
-    return jsonify({
-        'status': 'running',
-        'camera_type': 'Network Stream',
-        'camera_connected': camera.connected,
-        'camera_fps': round(camera.fps, 1) if camera.connected else 0,
-        'known_faces': len(face_recognition.known_face_names),
-        'faces_loaded': face_recognition.known_face_names,
-        'threads_active': camera.running
-    })
-
-@app.route('/api/alerts')
-def get_alerts():
-    """API endpoint for security alerts"""
-    unacknowledged_only = request.args.get('unacknowledged', 'false').lower() == 'true'
-    alerts = face_recognition.get_alerts(unacknowledged_only=unacknowledged_only)
-    return jsonify({
-        'total_alerts': len(alerts),
-        'alerts': alerts
-    })
-
-@app.route('/api/alerts/<int:alert_id>/acknowledge', methods=['POST'])
-def acknowledge_alert(alert_id):
-    """Acknowledge a specific alert"""
-    face_recognition.acknowledge_alert(alert_id)
-    return jsonify({'status': 'success', 'message': f'Alert {alert_id} acknowledged'})
-
-@app.route('/api/alerts/clear', methods=['POST'])
-def clear_alerts():
-    """Clear all alerts"""
-    face_recognition.clear_alerts()
-    return jsonify({'status': 'success', 'message': 'All alerts cleared'})
 
 if __name__ == '__main__':
     cpu_count = os.cpu_count() or 4
@@ -362,8 +372,8 @@ if __name__ == '__main__':
     print(f"   Access at: http://localhost:5000")
     print("="*50 + "\n")
     
-    # Initialize FaceRecognition
-    face_recognition = FaceRecognition(known_faces_dir='faces', max_workers=face_workers)
+    # Initialize FaceRecognition with database access
+    face_recognition = FaceRecognition(app=app, db=db, max_workers=face_workers)
     
     # Initialize camera (connects in background, non-blocking)
     camera = WebCamera(face_recognition)
@@ -376,6 +386,12 @@ if __name__ == '__main__':
     print(f"\n💡 Camera will connect in background while server runs")
     print("Press Ctrl+C to stop\n")
     
+    # Initialize API routes with shared instances
+    init_detections(face_recognition)
+    init_alerts(face_recognition)
+    init_status(camera, face_recognition)
+    init_registration(face_recognition, db)
+    
     try:
         try:
             from waitress import serve
@@ -386,3 +402,6 @@ if __name__ == '__main__':
         camera.stop()
         face_recognition.cleanup()
         print("Cleaned up")
+    init_alerts(face_recognition)
+    init_status(face_recognition, camera)
+    init_registration(face_recognition, db)

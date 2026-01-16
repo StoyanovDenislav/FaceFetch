@@ -201,7 +201,7 @@ class FaceRecognition:
         tracked_faces = {}  # Map encoding to persistent face_id
         next_face_id = 0  # Counter for assigning new face IDs
         
-        def __init__(self, known_faces_dir='faces', max_workers=4):
+        def __init__(self, app=None, db=None, max_workers=4):
             self.known_face_encodings = []
             self.known_face_names = []
             # Thread pool for parallel processing
@@ -219,7 +219,7 @@ class FaceRecognition:
             print("\n📷 Starting camera calibration...")
             self.camera_profile = self.calibrate_camera()
             
-            self.encode_faces(known_faces_dir)
+            self.encode_faces(app=app, db=db)
             
         def calibrate_camera(self):
             """Detect camera sensor format and focal length to tune detection parameters"""
@@ -374,52 +374,82 @@ class FaceRecognition:
             
             return profile
             
-        def encode_faces(self, known_faces_dir='faces'):
-            """Load and encode known faces in parallel"""
-            if not os.path.exists(known_faces_dir):
-                print(f"⚠️  Known faces directory '{known_faces_dir}' not found")
+        def encode_faces(self, app=None, db=None, fallback_dir='faces'):
+            """Load and encode known faces from database with filesystem fallback"""
+            # Try loading from database first
+            if app is not None and db is not None:
+                try:
+                    with app.app_context():
+                        # Import models here to avoid circular dependency
+                        from models import User, FaceProfile
+                        
+                        print("📸 Loading known faces from database...")
+                        
+                        # Query all active users with face profiles
+                        face_profiles = FaceProfile.query.join(User).filter(User.active == True).all()
+                        
+                        if face_profiles:
+                            print(f"Found {len(face_profiles)} face profiles")
+                            
+                            for profile in face_profiles:
+                                try:
+                                    # Convert binary encoding back to numpy array
+                                    encoding = np.frombuffer(profile.face_encoding, dtype=np.float64)
+                                    
+                                    # Add to known faces
+                                    self.known_face_encodings.append(encoding)
+                                    self.known_face_names.append(profile.label)
+                                    
+                                    print(f"  ✓ Loaded {profile.label}")
+                                except Exception as e:
+                                    print(f"  ❌ Error loading {profile.label}: {e}")
+                                    continue
+                            
+                            print(f"✅ Loaded {len(self.known_face_names)} faces from database: {self.known_face_names}\n")
+                            return
+                        else:
+                            print("⚠️  No face profiles found in database")
+                except Exception as e:
+                    print(f"⚠️  Database loading failed: {e}")
+            else:
+                print("⚠️  No app or db instance provided")
+            
+            # Fallback to filesystem if database loading failed or returned no faces
+            print(f"📂 Falling back to loading from '{fallback_dir}' directory...")
+            
+            if not os.path.exists(fallback_dir):
+                print(f"⚠️  Fallback directory '{fallback_dir}' not found")
+                print("❌ No faces loaded!\n")
                 return
-                
-            image_files = [f for f in os.listdir(known_faces_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            
+            image_files = [f for f in os.listdir(fallback_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
             
             if not image_files:
-                print(f"⚠️  No face images found in '{known_faces_dir}'")
+                print(f"⚠️  No face images found in '{fallback_dir}'")
+                print("❌ No faces loaded!\n")
                 return
             
-            print(f"📸 Loading {len(image_files)} known faces...")
+            print(f"Found {len(image_files)} face images")
             
-            def load_and_encode(image_file):
-                """Load and encode a single face image"""
+            for image_file in image_files:
                 try:
                     print(f"  Loading {image_file}...")
-                    face_image = face_recognition.load_image_file(f'{known_faces_dir}/{image_file}')
-                    print(f"  Encoding {image_file}...")
+                    face_image = face_recognition.load_image_file(f'{fallback_dir}/{image_file}')
                     encodings = face_recognition.face_encodings(face_image, model="small")
+                    
                     if encodings:
-                        print(f"  ✓ Successfully encoded {image_file}")
-                        return (encodings[0], image_file)
+                        self.known_face_encodings.append(encodings[0])
+                        # Use filename without extension as name
+                        name = os.path.splitext(image_file)[0]
+                        self.known_face_names.append(name)
+                        print(f"  ✓ Successfully encoded {name}")
                     else:
                         print(f"  ⚠️  No face found in {image_file}")
-                    return None
                 except Exception as e:
                     print(f"  ❌ Error loading {image_file}: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    return None
-            
-            # Process faces sequentially to avoid thread pool issues
-            for img in image_files:
-                try:
-                    result = load_and_encode(img)
-                    if result:
-                        encoding, name = result
-                        self.known_face_encodings.append(encoding)
-                        self.known_face_names.append(name)
-                except Exception as e:
-                    print(f"  ❌ Failed to process {img}: {e}")
                     continue
-                
-            print(f"✅ Loaded {len(self.known_face_names)} faces: {self.known_face_names}\n")
+            
+            print(f"✅ Loaded {len(self.known_face_names)} faces from filesystem: {self.known_face_names}\n")
             
         def trigger_alert(self, alert_type, message, face_data=None):
             """
