@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Face Fetch</title>
+  <link href="../css/style.css" rel="stylesheet"/>
+</head>
+<body>
+  <header class="navbar">
+      <img class="navbar_logo" src="../images/FaceFetchLogoTrans.png" alt="Logo"></img>
+      <div class="navbar_pageNav">
+        <div class="navbar_pageNav_buttonCont">
+            <button class="selected">Dashboard</button>
+            <button>Activity Log</button>
+        </div>
+      </div>
+      <div class="navbar_logo_2">FaceFetch</div>
+      <div class="navbar_profile">
+          <span>[Username]</span>
+          <img src="../images/User.png" alt="user">
+      </div>
+  </header>
+
+  <!-- Main body part -->
+  <div class="dashboard_main_cont">
+      <div class="dashboard_main_camera">Camera</div>
+      <div class="dashboard_main_extra">
+          <span class="dashboard_main_extra_title">System Status:</span>
+          <div id="dashboard_status:container" class="dashboard_main_extra_data_status">
+              <span id="dashboard_status:value">Unknown</span>
+          </div>
+      </div>
+      <div class="dashboard_main_extra">
+          <span class="dashboard_main_extra_title">System Uptime:</span>
+          <div class="dashboard_main_extra_data">xx:xx hours</div>
+          <span class="dashboard_main_extra_title" style="text-align: center;">System Startup Date:</span>
+          <div class="dashboard_main_extra_data">start date </div>
+      </div>
+      <div class="dashboard_main_extra">
+          <span class="dashboard_main_extra_title">Unusual Activity Logged:</span>
+          <div class="dashboard_main_extra_title">
+              <span>Last Hour:</span>
+              <span  class="dashboard_main_extra_data">X last hour</span>
+          </div>
+          <div class="dashboard_main_extra_title">
+              <span>Since Launch:</span>
+              <span class="dashboard_main_extra_data">X since launch</span>
+          </div>
+      </div>
+  </div>
+
+  <!-- recent activity log -->
+  <div class="dashboard_activity_cont">
+      <div class="dashboard_activity_bar">
+          <span class="title">Activity logs from the last hour:</span>
+          <span class="extra">More information is on the <a href="https://google.com">Activity log</a> page!</span>
+      </div>
+      <div id="dashboard_log_container" class="dashboard_activity_logs_cont">
+
+          <!-- Original code for the activity containers! delete once no longer needed. -->
+<!--          <div class="activity_log_cont">-->
+<!--              <div class="activity_log_type"><span id="activity_log_type:value">Log type</span></div>-->
+<!--              <div class="activity_log_desc">-->
+<!--                  <span id="activity_log_desc:value">Facefetch system detected ...!</span>-->
+<!--              </div>-->
+<!--              <div class="activity_log_score">-->
+<!--                  <span>Confidence:</span>-->
+<!--                  <span id="activity_log_score:value">score%</span>-->
+<!--              </div>-->
+<!--              <div class="activity_log_datetime">-->
+<!--                  <span>Logged at:</span>-->
+<!--                  <span id="activity_log_datetime:value">datetime</span>-->
+<!--              </div>-->
+<!--          </div>-->
+      </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+      <div class="footer_main">
+          <div class="footer_main_cont">
+              <span class="title">Location:</span>
+              <ul>
+                  <li>Eindhoven, xxxxNJ</li>
+                  <li>Example street 13.</li>
+                  <li><br>Netherlands</li>
+              </ul>
+          </div>
+          <div class="footer_main_cont">
+              <span class="title">Customer Support:</span>
+              <ul>
+                  <li>Number: 06 00000000</li>
+                  <li>Mail: FaceFetchSupport@gmail.com</li>
+                  <li><br>Available mo-fri from 9:00 - 17:00</li>
+              </ul>
+          </div>
+          <div class="footer_main_cont">
+              <span class="title">Social Media:</span>
+              <div class="footer_main_media_cont">
+                  <figure>
+                      <img src="../images/instagram.png" alt="instagram">
+                      <figcaption>@facefetch</figcaption>
+                  </figure>
+                  <figure>
+                      <img src="../images/facebook.png" alt="facebook">
+                      <figcaption>@FaceFetch</figcaption>
+                  </figure>
+                  <figure>
+                      <img src="../images/linkedin.png" alt="linkedin">
+                      <figcaption>FaceFetchSecurity</figcaption>
+                  </figure>
+              </div>
+          </div>
+      </div>
+      <div class="footer_quick_nav">
+          <div class="footer_quick_nav_cont">
+              <span class="title">Quick Navigation</span>
+              <ul>
+                  <li><a href="https://google.com">Dashboard</a></li>
+                  <li><a href="https://google.com">Activity Log</a></li>
+                  <li><a href="https://google.com">Login/Logout</a></li>
+              </ul>
+
+              <img class="footer_quick_nav_logo_cont" src="../images/FaceFetchLogoTrans.png" alt="logo">
+
+              <!--              <figure class="footer_quick_nav_logo_cont">-->
+<!--                  <img src="../images/FaceFetchLogoTrans.png" alt="logo">-->
+<!--                  <figcaption>FaceFetch</figcaption>-->
+<!--              </figure>-->
+          </div>
+
+      </div>
+  </footer>
+
+  <script src="../js/javaScript.js"></script>
+<!--<script-->
+</body>
+</html>
