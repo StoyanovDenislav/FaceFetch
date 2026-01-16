@@ -3,7 +3,10 @@
 <head>
   <meta charset="utf-8">
   <title>Face Fetch</title>
-  <link href="../css/style.css" rel="stylesheet"/>
+    <!-- Adding bootstrap completely ruins the current styling. not used for now. Idea: use AI to convert CSS and HTML to bootstrap -->
+<!--    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">-->
+    <link href="../css/main.css" rel="stylesheet"/>
+    <link href="../css/dashboard.css" rel="stylesheet"/>
 </head>
 <body>
   <header class="navbar">
@@ -26,7 +29,7 @@
       <div class="dashboard_main_camera">Camera</div>
       <div class="dashboard_main_extra">
           <span class="dashboard_main_extra_title">System Status:</span>
-          <div id="dashboard_status:container" class="dashboard_main_extra_data_status good">
+          <div id="dashboard_status:container" class="dashboard_main_extra_data_status">
               <span id="dashboard_status:value">Unknown</span>
           </div>
       </div>
