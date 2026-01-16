@@ -6,6 +6,23 @@
     --status-color-bad: #fa0000;
     --status-color-warning: #ff7d02;
     --status-color-unknown: #a301e3;
+
+    --menu-base-color: black;
+    --menu-item-color: #393939;
+    --background-color: white;
+
+    --button-color: #414d91;
+    --button-selected-color: #667eea;
+    --button-glow-color: rgba(102, 126, 234, 0.5);
+
+    --content-base-color: #474747;
+    --content-item-color: #676565;
+
+    --text-light-color: white;
+    --text-light-unfocus-color: #959494;
+    --text-dark-color: black;
+
+    --hyperlink-color: #7e7ef1;
 }
 
 body {  
@@ -21,12 +38,12 @@ body {
 .navbar
 {
     height: 100px;
-    background-color: white;
+    background-color: var(--menu-base-color);
     display: grid;
     grid-template-rows: 1fr;
-    grid-template-columns: 100px 0.5fr 3fr 0.5fr 3fr 1.5fr;
+    grid-template-columns: 100px 3fr 1fr 2fr 1.5fr;
     grid-template-areas:
-    "navbarLogo . navbarPageNav . navbarLogo2 navbarProfile";
+    "navbarLogo navbarLogo2 . navbarPageNav navbarProfile";
 }
 .navbar_logo
 {
@@ -42,36 +59,40 @@ body {
 }
 .navbar_pageNav_buttonCont
 {
-    background-color: black;
-    height: 50px;
+    height: 40px;
     width: 100%;
-    border: 5px solid var(--primary-color);
-    border-radius: 10px;
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: 1fr;
+    background-color: transparent;
 }
 .navbar_pageNav_buttonCont button
 {
-    background-color: black;
-    color: white;
+    background-color: transparent;
+    color: var(--text-light-unfocus-color);
     border: 0 solid var(--secondary-color);
-    font-size: 2em;
+    border-radius: 10px;
+    font-size: 1em;
 }
 .navbar_pageNav_buttonCont button.selected
 {
-    background-color: var(--primary-color);
+    background-color: var(--button-selected-color);
+    color: var(--text-light-color);
+    text-decoration: underline;
 }
 .navbar_pageNav_buttonCont button:hover
 {
     transition: 0.15s;
-    border: 1px solid var(--secondary-color);
-     box-shadow: inset 0 0 10em 10em rgba(255, 255, 255, 0.3);
+     /*box-shadow: inset 0 0 10em 10em rgba(255, 255, 255, 0.3);*/
+    box-shadow: 0 0 5px 5px var(--button-glow-color);
+
+    color: var(--text-light-color);
+    background-color: var(--button-selected-color);
 }
 .navbar_logo_2
 {
     grid-area: navbarLogo2;
-    margin: auto;
+    /*margin: auto;*/
     font-size: 4em;
     background: -webkit-linear-gradient(180deg, var(--primary-color), var(--secondary-color));
     -webkit-background-clip: text;
@@ -88,16 +109,15 @@ body {
     gap: 10px;
     padding-right: 10px;
     img {
-        width: 75px;
-        height: 75px;
+        width: 45px;
+        height: 45px;
     }
     span {
-        font-size: 1.2em;
-        background-color: black;
-        color: white;
+        font-size: 1em;
+        background-color: var(--menu-base-color);
+        color: var(--text-light-color);
         height: 1.4em;
         padding: 0.3em;
-        border: 5px solid var(--primary-color);
         border-radius: 10px;
         overflow: hidden;
         text-wrap: nowrap;
@@ -108,9 +128,9 @@ body {
 .dashboard_main_cont
 {
     height: 700px;
-    margin: 50px 50px 0 50px;
+    margin: 50px 2.5% 0 2.5%;
     display: grid;
-    column-gap: 50px;
+    column-gap: 2.5%;
     row-gap: 50px;
     grid-template-rows: 1fr 1fr 1fr;
     grid-template-columns: 4fr 1.25fr;
@@ -122,16 +142,15 @@ body {
 .dashboard_main_camera
 {
     grid-area: dashboardMainCamera;
-    background-color: gray;
+    background-color: var(--content-base-color);
     align-items: center;
     display: flex;
     justify-content: center;
 }
 .dashboard_main_extra
 {
-    background-color: white;
+    background-color: var(--content-base-color);
     padding: 1em;
-    border: 1px solid black;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -181,20 +200,19 @@ body {
 
 .dashboard_activity_cont
 {
-    background-color: white;
-    margin: 50px 50px 0 50px;
+    margin: 50px 2.5% 0 2.5%;
     height: 700px   ;
     display: grid;
     grid-template-rows: 75px 1fr;
-    border: 5px solid var(--primary-color);
+    /*border: 5px solid var(--primary-color);*/
 
 }
 .dashboard_activity_bar
 {
     display: flex;
-    background-color: white;
+    background-color: var(--content-base-color);
     flex-direction: row;
-    padding: 0 10px;
+    padding: 0 1%;
     align-items: center;
     border-bottom: 5px solid var(--secondary-color);
     .title
@@ -208,12 +226,12 @@ body {
 }
 .dashboard_activity_logs_cont
 {
-    background-color: white;
+    background-color: var(--content-item-color);
     overflow-y: scroll;
     display: flex;
     flex-direction: column;
     gap: 20px;
-    padding: 20px;
+    padding: 20px 2%;
 }
 
 
@@ -222,33 +240,33 @@ body {
 .footer
 {
     height: 250px;
-    background-color: black;
+    background-color: var(--menu-base-color);
     display: flex;
-    padding: 20px;
+    padding: 20px 1%;
     gap: 20px;
-    color: white;
+    color: var(--text-light-color);
 }
 .footer_main
 {
     min-width: 66%;
     max-width: 66%;
-    background-color: gray;
+    background-color: var(--menu-item-color);
     padding: 20px 0;
     display: flex;
     justify-content: space-around;
 }
 .footer_quick_nav
 {
-    background-color: gray;
+    background-color: var(--menu-item-color);
     width: 34%;
     max-width: 34%;
-    padding: 20px;
+    padding: 20px 1%;
     position: relative;
 }
 .footer_main_cont ,.footer_quick_nav_cont
 {
-    background-color: green;
     height: 100%;
+    overflow: hidden;
     .title
     {
         font-size: 1.3em;
@@ -256,7 +274,6 @@ body {
     }
     ul
     {
-        background-color: orange;
         list-style-type: none;
         margin-block-start: 60px;
         margin-block-end: 0;
@@ -268,12 +285,16 @@ body {
     ul
     {
         font-size: 1.2em;
+        a
+        {
+            color: var(--hyperlink-color);
+        }
     }
 }
 .footer_main_media_cont
 {
     display: flex;
-    gap: 10px;
+    gap: 1px;
 
     figure
     {
@@ -295,7 +316,6 @@ body {
 }
 .footer_quick_nav_logo_cont
 {
-    background-color: yellow;
     width: 100px;
     height: 100px;
     position: absolute;
@@ -314,7 +334,7 @@ body {
 .activity_log_type
 {
     flex-shrink: 0;
-    width: 250px;
+    width: 20%;
     font-size: 2em;
     padding: 0 10px;
     display: flex;
@@ -336,7 +356,7 @@ body {
 .activity_log_desc
 {
     flex-grow: 1;
-    padding: 5px;
+    padding: 0.1%;
     font-size: 1.2em;
     background-color: white;
     overflow: hidden;
@@ -347,7 +367,7 @@ body {
 {
     flex-shrink: 0;
     height: 100%;
-    width: 100px;
+    width: 7.5%;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -358,12 +378,11 @@ body {
 {
     flex-shrink: 0;
     height: 100%;
-    width: 125px;
+    width: fit-content  ;
     background-color: var(--primary-color);
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     border-left: 1px solid black;
-
 }
