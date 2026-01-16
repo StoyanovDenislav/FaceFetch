@@ -2,7 +2,7 @@
 Flask Web Server for Facial Recognition with Live Feed
 Connects to camera stream URL (never accesses USB directly)
 """
-from flask import Flask, render_template, Response
+from flask import Flask, render_template, Response, jsonify
 import pymysql
 import cv2
 import sys
@@ -48,14 +48,19 @@ def ensure_database_exists():
         raise
 
 # Camera stream configuration from .env
-# If CAMERA_STREAM_URL is set in .env, use it. Otherwise, default to localhost:1337
+CAMERA_SOURCE = os.getenv('CAMERA_SOURCE', 'network').lower()  # 'usb' or 'network'
 CAMERA_STREAM_URL = os.getenv('CAMERA_STREAM_URL', 'http://127.0.0.1:1337/camera/usb_0/stream')
 CAMERA_STREAM_TOKEN = os.getenv('CAMERA_STREAM_TOKEN', '').strip('\'"')  # Strip quotes if present
 
 print(f"\n📋 Camera Configuration from .env:")
-print(f"   Stream URL: {CAMERA_STREAM_URL}")
-print(f"   Token: {CAMERA_STREAM_TOKEN[:8]}...{CAMERA_STREAM_TOKEN[-4:] if CAMERA_STREAM_TOKEN else 'NOT SET'}")
-print(f"   Full URL: {CAMERA_STREAM_URL}{'?' if '?' not in CAMERA_STREAM_URL else '&'}token={CAMERA_STREAM_TOKEN[:8]}..." if CAMERA_STREAM_TOKEN else f"   Full URL: {CAMERA_STREAM_URL} (NO AUTH)")
+print(f"   Camera Source: {CAMERA_SOURCE.upper()}")
+if CAMERA_SOURCE == 'network':
+    print(f"   Stream URL: {CAMERA_STREAM_URL}")
+    print(f"   Token: {CAMERA_STREAM_TOKEN[:8]}...{CAMERA_STREAM_TOKEN[-4:] if CAMERA_STREAM_TOKEN else 'NOT SET'}")
+    print(f"   Full URL: {CAMERA_STREAM_URL}{'?' if '?' not in CAMERA_STREAM_URL else '&'}token={CAMERA_STREAM_TOKEN[:8]}..." if CAMERA_STREAM_TOKEN else f"   Full URL: {CAMERA_STREAM_URL} (NO AUTH)")
+else:
+    print(f"   USB Camera: Index 0 (Direct)")
+
 
 
 class FrameBuffer:
@@ -103,6 +108,7 @@ class WebCamera:
         self.connected = False
         self.connection_error = None
         self.camera_source = None  # 'network' or 'usb'
+        self.paused = False  # For pausing detection during registration
         
         # Start connection in background (non-blocking)
         self.connection_thread = threading.Thread(target=self._connect_to_stream, daemon=True)
@@ -110,6 +116,16 @@ class WebCamera:
     
     def _connect_to_stream(self):
         """Connect to camera stream in background thread with USB fallback"""
+        # Check if user wants to use USB camera directly
+        if CAMERA_SOURCE == 'usb':
+            print("\n📸 CAMERA_SOURCE set to 'usb' - connecting directly to USB camera...")
+            if self._connect_to_usb():
+                return
+            else:
+                self.connection_error = "Could not connect to USB camera"
+                print(f"❌ {self.connection_error}")
+                return
+        
         # Try network stream first
         stream_url = CAMERA_STREAM_URL
         if CAMERA_STREAM_TOKEN:
@@ -176,34 +192,42 @@ class WebCamera:
         print(f"❌ {self.connection_error}")
     
     def _connect_to_usb(self):
-        """Try to connect to USB camera as fallback"""
+        """Try to connect to USB camera (with retries for release race conditions)"""
         print("🔍 Attempting to connect to USB camera (index 0)...")
         
-        try:
-            self.video_capture = cv2.VideoCapture(0)
-            
-            if self.video_capture.isOpened():
-                # Test read a frame
-                ret, frame = self.video_capture.read()
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                self.video_capture = cv2.VideoCapture(0)
                 
-                if ret and frame is not None:
-                    print(f"✅ Connected to USB camera successfully!")
-                    print(f"   Camera: USB Camera 0 (Direct)")
-                    print(f"   Resolution: {frame.shape[1]}x{frame.shape[0]}")
-                    self.connected = True
-                    self.camera_source = 'usb'
-                    self.start_threads()
-                    return True
+                if self.video_capture.isOpened():
+                    # Test read a frame
+                    ret, frame = self.video_capture.read()
+                    
+                    if ret and frame is not None:
+                        print(f"✅ Connected to USB camera successfully!")
+                        print(f"   Camera: USB Camera 0 (Direct)")
+                        print(f"   Resolution: {frame.shape[1]}x{frame.shape[0]}")
+                        self.connected = True
+                        self.camera_source = 'usb'
+                        self.start_threads()
+                        return True
+                    else:
+                        print(f"   Attempt {attempt+1}: Failed to read frame from USB camera")
+                        self.video_capture.release()
+                        self.video_capture = None
                 else:
-                    print(f"   Failed to read frame from USB camera")
-                    self.video_capture.release()
-                    self.video_capture = None
-            else:
-                print(f"   USB camera not opened")
-                
-        except Exception as e:
-            print(f"   USB camera error: {type(e).__name__}: {e}")
+                    print(f"   Attempt {attempt+1}: USB camera not opened")
+                    
+            except Exception as e:
+                print(f"   Attempt {attempt+1}: USB camera error: {type(e).__name__}: {e}")
+            
+            # Wait before retrying (camera might be busy releasing from browser)
+            if attempt < max_retries - 1:
+                print(f"   ⏳ Waiting for camera release... ({attempt+1}/{max_retries})")
+                time.sleep(0.5)
         
+        print("❌ Failed to connect to USB camera after retries")
         return False
     
     def start_threads(self):
@@ -238,6 +262,14 @@ class WebCamera:
     def _process_loop(self):
         """Background thread: process frames with face recognition"""
         while self.running:
+            if self.paused:
+                # When paused, just pass through raw frames without processing
+                frame = self.frame_buffer.get_latest()
+                if frame is not None:
+                    self.frame_buffer.set_processed(frame)
+                time.sleep(0.05)
+                continue
+                
             frame = self.frame_buffer.get_latest()
             if frame is not None:
                 processed_frame = self.face_recognition.process_frame(frame.copy(), draw_annotations=True)
@@ -294,6 +326,57 @@ class WebCamera:
         cv2.putText(frame, text, (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 
                    0.8, (255, 255, 255), 2, cv2.LINE_AA)
         return frame
+    
+    def pause(self):
+        """Pause face detection processing"""
+        self.paused = True
+        print("⏸️  Face detection paused")
+    
+    def resume(self):
+        """Resume face detection processing"""
+        self.paused = False
+        print("▶️  Face detection resumed")
+    
+    def release_camera(self):
+        """Release the camera so browser can access it"""
+        print("📷 Releasing camera for browser access...")
+        
+        # Stop threads first
+        self.running = False
+        if self.capture_thread:
+            self.capture_thread.join(timeout=2)
+        if self.process_thread:
+            self.process_thread.join(timeout=2)
+        
+        # Release the video capture
+        if self.video_capture:
+            self.video_capture.release()
+            self.video_capture = None
+        
+        self.connected = False
+        print("✅ Camera released - browser can now access it")
+    
+    def reconnect_camera(self):
+        """Reconnect to the camera after browser releases it"""
+        print("🔄 Reconnecting to camera...")
+        
+        # Reset state
+        self.connected = False
+        self.video_capture = None
+        
+        # Reconnect using the same logic as initial connection
+        import threading
+        self.connection_thread = threading.Thread(target=self._connect_to_stream, daemon=True)
+        self.connection_thread.start()
+        
+        # Wait a bit for connection (non-blocking)
+        import time
+        time.sleep(2)
+        
+        if self.connected:
+            print("✅ Camera reconnected successfully")
+        else:
+            print("⚠️  Camera reconnection in progress...")
     
     def stop(self):
         """Stop background threads"""
@@ -353,11 +436,112 @@ def index():
     """Home page with video feed"""
     return render_template('index.html')
 
+@app.route('/register')
+def register():
+    """Registration page"""
+    return render_template('register.html')
+
 @app.route('/video_feed')
 def video_feed():
     """Video streaming route"""
     return Response(camera.generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/api/control/enter_registration', methods=['POST'])
+def enter_registration_mode():
+    """Stop face recognition module and release camera for browser access"""
+    global face_recognition
+    try:
+        if face_recognition:
+            print("🛑 Stopping face recognition module for registration...")
+            face_recognition.cleanup()
+            face_recognition = None
+        
+        # Release camera so browser can access it
+        camera.release_camera()
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Entered registration mode - camera released for browser'
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/control/exit_registration', methods=['POST'])
+def exit_registration_mode():
+    """Reinstantiate face recognition module and reconnect camera (Full Start)"""
+    global face_recognition
+    try:
+        print("🔄 Performing full re-initiation of facial recognition...")
+
+        # 1. Instantiate new Face Recognition module first
+        cpu_count = os.cpu_count() or 4
+        face_workers = max(2, min(8, cpu_count // 2))
+        
+        face_recognition = FaceRecognition(app=app, db=db, max_workers=face_workers)
+        
+        # 2. Update API routes with new FR instance
+        from api.routes.detections import init_detections
+        from api.routes.alerts import init_alerts
+        from api.routes.registration import init_registration
+        from api.routes.status import init_status
+        
+        init_detections(face_recognition)
+        init_alerts(face_recognition)
+        init_registration(face_recognition, db)
+        init_status(face_recognition, camera)
+        
+        # 3. Bind the new FR instance to the existing camera object
+        if camera:
+            camera.face_recognition = face_recognition
+            print("✅ Camera rebound to new face recognition instance")
+            
+            # 4. NOW reconnect the camera (ensures FR is ready when frames start arriving)
+            camera.reconnect_camera()
+        
+        print(f"✅ Full start complete. Loaded {len(face_recognition.known_face_names)} known faces")
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Full re-initiation complete',
+            'faces_loaded': len(face_recognition.known_face_names),
+            'faces': face_recognition.known_face_names
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/control/pause', methods=['POST'])
+def pause_detection():
+    """Pause face detection during registration (legacy - use enter_registration instead)"""
+    camera.pause()
+    return jsonify({'status': 'success', 'message': 'Face detection paused'})
+
+@app.route('/api/control/resume', methods=['POST'])
+def resume_detection():
+    """Resume face detection after registration (legacy - use exit_registration instead)"""
+    camera.resume()
+    return jsonify({'status': 'success', 'message': 'Face detection resumed'})
+
+@app.route('/api/control/reload', methods=['POST'])
+def reload_faces():
+    """Reload face recognition from database"""
+    try:
+        # Clear existing faces
+        face_recognition.known_face_encodings = []
+        face_recognition.known_face_names = []
+        
+        # Reload from database
+        face_recognition.encode_faces(app=app, db=db)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Face recognition reloaded',
+            'faces_loaded': len(face_recognition.known_face_names),
+            'faces': face_recognition.known_face_names
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 if __name__ == '__main__':
     cpu_count = os.cpu_count() or 4
@@ -389,7 +573,7 @@ if __name__ == '__main__':
     # Initialize API routes with shared instances
     init_detections(face_recognition)
     init_alerts(face_recognition)
-    init_status(camera, face_recognition)
+    init_status(face_recognition, camera)
     init_registration(face_recognition, db)
     
     try:
@@ -400,8 +584,6 @@ if __name__ == '__main__':
             app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
     finally:
         camera.stop()
-        face_recognition.cleanup()
+        if face_recognition:
+            face_recognition.cleanup()
         print("Cleaned up")
-    init_alerts(face_recognition)
-    init_status(face_recognition, camera)
-    init_registration(face_recognition, db)

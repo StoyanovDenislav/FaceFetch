@@ -1,0 +1,5 @@
+### Get system status
+GET http://localhost:5000/api/status
+Content-Type: application/json
+
+###
