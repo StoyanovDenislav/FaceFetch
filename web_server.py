@@ -424,10 +424,10 @@ def index():
     """Home page with video feed"""
     return render_template('index.html')
 
-@app.route('/register')
+@app.route('/register_face')
 def register():
     """Registration page"""
-    return render_template('register.html')
+    return render_template('register_face.html')
 
 @app.route('/video_feed')
 def video_feed():
