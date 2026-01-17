@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -368,6 +368,7 @@
         100% {
           opacity: 1;
         }
+
         50% {
           opacity: 0.7;
         }
@@ -403,6 +404,7 @@
       }
     </style>
   </head>
+
   <body>
     <!-- Alarm Banner -->
     <div id="alarmBanner" class="alarm-banner">
@@ -432,8 +434,9 @@
 
       function createEASAlarm() {
         if (!audioContext) {
-          audioContext = new (window.AudioContext ||
-            window.webkitAudioContext)();
+          audioContext = new (
+            window.AudioContext || window.webkitAudioContext
+          )();
         }
 
         // Stop any existing alarm
@@ -507,6 +510,21 @@
       <header>
         <h1>🔒 Facial Recognition System</h1>
         <p class="subtitle">Real-time Face Detection & Anti-Spoofing</p>
+        <div style="margin-top: 15px">
+          <a
+            href="/register"
+            style="
+              color: white;
+              text-decoration: none;
+              background: rgba(255, 255, 255, 0.2);
+              padding: 10px 20px;
+              border-radius: 5px;
+              display: inline-block;
+            "
+          >
+            👤 Register New User
+          </a>
+        </div>
       </header>
 
       <div class="main-content">
@@ -618,7 +636,7 @@
             padding: 15px;
             border-radius: 8px;
             overflow-x: auto;
-            font-family: 'Courier New', monospace;
+            font-family: &quot;Courier New&quot;, monospace;
             font-size: 0.85em;
             max-height: 400px;
             overflow-y: auto;
@@ -655,7 +673,7 @@ Loading...</pre
           document.removeEventListener("click", enableAudio);
           console.log("Audio enabled");
         },
-        { once: true }
+        { once: true },
       );
 
       // Show audio notice initially
@@ -738,7 +756,7 @@ Loading...</pre
                 console.log(
                   "Sustained detection for",
                   detectionDuration,
-                  "ms - triggering alarm"
+                  "ms - triggering alarm",
                 );
                 triggerAlarm();
                 unknownDetectionStart = null; // Reset after triggering
@@ -748,7 +766,7 @@ Loading...</pre
                   detectionDuration,
                   "ms (need",
                   DETECTION_DELAY,
-                  "ms)"
+                  "ms)",
                 );
               }
             }
@@ -839,10 +857,10 @@ Loading...</pre
                 face.state === "known"
                   ? "badge-known"
                   : face.state === "unknown"
-                  ? "badge-unknown"
-                  : face.state === "spoof"
-                  ? "badge-spoof"
-                  : "badge-pending";
+                    ? "badge-unknown"
+                    : face.state === "spoof"
+                      ? "badge-spoof"
+                      : "badge-pending";
 
               const liveClass = face.is_live ? "live" : "not-live";
               const liveText = face.is_live ? "Live" : "Not Live";
@@ -851,8 +869,8 @@ Loading...</pre
                             <div class="face-header">
                                 <div class="face-name">Face #${index + 1}</div>
                                 <span class="face-badge ${badgeClass}">${
-                face.state
-              }</span>
+                                  face.state
+                                }</span>
                             </div>
                             <div class="face-details">
                                 <strong>Name:</strong> ${
@@ -881,7 +899,7 @@ Loading...</pre
           document.getElementById("jsonData").textContent = JSON.stringify(
             data,
             null,
-            2
+            2,
           );
         } catch (error) {
           console.error("Error fetching detections:", error);
@@ -933,8 +951,8 @@ Loading...</pre
                             </div>
                             <div>
                                 <span class="face-badge badge-${entry.state}">${
-                entry.state
-              }</span>
+                                  entry.state
+                                }</span>
                             </div>
                         `;
 
@@ -967,14 +985,47 @@ Loading...</pre
       // Update history every 2 seconds
       setInterval(updateHistory, 2000);
 
+      // Check if face recognition needs to be restarted (e.g., after registration)
+      async function ensureFaceRecognitionRunning() {
+        try {
+          const response = await fetch("/api/status");
+          const data = await response.json();
+
+          // If we get a response but known_faces is 0 or there's an error, try to restart
+          if (response.status === 500 || !data.faces_loaded) {
+            console.log(
+              "Face recognition may not be running, attempting to restart...",
+            );
+            const exitResponse = await fetch("/api/control/exit_registration", {
+              method: "POST",
+            });
+            const exitData = await exitResponse.json();
+
+            if (exitResponse.ok) {
+              console.log("✅ Face recognition restarted:", exitData.message);
+              console.log("Faces loaded:", exitData.faces);
+            } else {
+              console.error(
+                "❌ Failed to restart face recognition:",
+                exitData.message,
+              );
+            }
+          }
+        } catch (error) {
+          console.error("Error checking face recognition status:", error);
+        }
+      }
+
       // Update system status every 10 seconds
       setInterval(updateSystemStatus, 10000);
 
       // Initial load
-      updateDetections();
-      updateSystemStatus();
-      updateHistory();
-      updateAlerts();
+      ensureFaceRecognitionRunning().then(() => {
+        updateDetections();
+        updateSystemStatus();
+        updateHistory();
+        updateAlerts();
+      });
     </script>
   </body>
 </html>

@@ -1,47 +1,55 @@
-from __init__ import create_app, db
-from models import Person, Face
+from web_server import create_app
+from models import db, User, FaceProfile
 import face_recognition
+import numpy as np
 import os
-import base64
 
 app = create_app()
 with app.app_context():
     people_data = [
-        {"name": "Denislav", "image_path": "path/to/denislav.jpg"},
-        {"name": "Kristian", "image_path": "path/to/kristian.jpg"},
-        {"name": "Yoan", "image_path": "path/to/yoan.jpg"},
-        {"name": "Hristina", "image_path": "path/to/hristina.jpg"},
-        {"name": "Yoanna", "image_path": "path/to/yoanna.jpg"},
-        {"name": "Brian", "image_path": "path/to/brian.jpg"},
+        {"name": "Denislav", "image_path": "D:\\FaceFetch\\FaceFetch\\faces\\denkata4.jpg"},
+        {"name": "Kristian", "image_path": "D:\\FaceFetch\\FaceFetch\\faces\\stefcho.jpg"},
+        
     ]
     
-    # Encode images in b64 and store in db
+    # Encode images and store in db
     for person_data in people_data:
-        person = Person(name=person_data["name"])
-        db.session.add(person)
-        db.session.commit()
+        name = person_data["name"]
+        
+        # Check if user already exists
+        existing_user = User.query.filter_by(name=name).first()
+        if existing_user:
+            print(f"User {name} already exists, skipping...")
+            continue
+            
+        # Create new user
+        user = User(name=name, active=True)
+        db.session.add(user)
+        db.session.flush()  # Get user.id without committing
         
         image_path = person_data["image_path"]
         if os.path.exists(image_path):
-            # Read and encode image to base64
-            with open(image_path, 'rb') as image_file:
-                image_b64 = base64.b64encode(image_file.read()).decode('utf-8')
-            
             # Load image for face recognition
+            print(f"Processing {name}...")
             image = face_recognition.load_image_file(image_path)
-            encodings = face_recognition.face_encodings(image)
+            encodings = face_recognition.face_encodings(image, model="small")
             
             if encodings:
-                face = Face(
-                    person_id=person.id,
+                # Convert encoding to binary format
+                encoding_binary = encodings[0].tobytes()
+                
+                face_profile = FaceProfile(
+                    user_id=user.id,
+                    label=name,
                     image_path=image_path,
-                    image_b64=image_b64,  # Store base64 encoded image
-                    face_encoding=encodings[0]
+                    face_encoding=encoding_binary
                 )
-                db.session.add(face)
+                db.session.add(face_profile)
                 db.session.commit()
-                print(f"Added {person_data['name']}")
+                print(f"✓ Added {name}")
             else:
-                print(f"No face found in {image_path}")
+                print(f"⚠️  No face found in {image_path}")
         else:
-            print(f"Image not found: {image_path}")
+            print(f"⚠️  Image not found: {image_path}")
+    
+    print("✅ Database population complete!")

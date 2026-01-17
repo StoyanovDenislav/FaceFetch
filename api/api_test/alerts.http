@@ -1,0 +1,23 @@
+### Get all alerts
+GET http://localhost:5000/api/alerts
+Content-Type: application/json
+
+###
+
+### Get only unacknowledged alerts
+GET http://localhost:5000/api/alerts?unacknowledged=true
+Content-Type: application/json
+
+###
+
+### Acknowledge a specific alert (replace <alert_id> with actual ID)
+POST http://localhost:5000/api/alerts/0/acknowledge
+Content-Type: application/json
+
+###
+
+### Clear all alerts
+POST http://localhost:5000/api/alerts/clear
+Content-Type: application/json
+
+###

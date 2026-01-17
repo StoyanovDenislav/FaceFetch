@@ -1,4 +1,7 @@
-from __init__ import db
+from flask_sqlalchemy import SQLAlchemy
+
+# Database instance will be initialized by web_server.py
+db = SQLAlchemy()
 
 
 class User(db.Model):

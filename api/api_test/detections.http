@@ -1,0 +1,17 @@
+### Get current face detections
+GET http://localhost:5000/api/detections
+Content-Type: application/json
+
+###
+
+### Get detection history
+GET http://localhost:5000/api/history
+Content-Type: application/json
+
+###
+
+### Clear detection history
+POST http://localhost:5000/api/history/clear
+Content-Type: application/json
+
+###
