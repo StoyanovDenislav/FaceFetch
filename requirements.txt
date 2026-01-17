@@ -7,7 +7,7 @@ dlib==20.0.0
 numpy==2.2.6
 scipy==1.16.3
 pillow==12.1.0
-
+cryptography
 
 # Web server (Flask)
 Flask==3.1.2

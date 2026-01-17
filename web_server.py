@@ -141,55 +141,43 @@ class WebCamera:
         print(f"   Attempting cv2.VideoCapture({stream_url[:60]}...)")
         print(f"   OpenCV version: {cv2.__version__}")
         
-        # Try network camera - fewer retries since we have fallback
-        max_retries = 5
+        # Try network camera - retry indefinitely until found
+        print(f"\n🔄 Connecting to network camera... (Will retry until connected)")
         retry_delay = 2
+        attempt = 0
         
-        for attempt in range(max_retries):
+        while True:
+            attempt += 1
             try:
                 self.video_capture = cv2.VideoCapture(stream_url)
-                print(f"   Attempt {attempt + 1}: VideoCapture created, isOpened={self.video_capture.isOpened()}")
                 
                 if self.video_capture.isOpened():
                     # Test read a frame
                     ret, frame = self.video_capture.read()
-                    print(f"   Attempt {attempt + 1}: Frame read, ret={ret}, frame shape={frame.shape if ret else 'None'}")
                     
                     if ret and frame is not None:
-                        print(f"✅ Connected to network camera on attempt {attempt + 1}!")
+                        print(f"✅ Connected to network camera on attempt {attempt}!")
                         print(f"   Network camera: {CAMERA_STREAM_URL}")
                         self.connected = True
                         self.camera_source = 'network'
                         self.start_threads()
                         return
                     else:
-                        print(f"   Attempt {attempt + 1}: Failed to read frame")
+                        print(f"   Attempt {attempt}: Failed to read frame")
                         self.video_capture.release()
                         self.video_capture = None
                 else:
-                    print(f"   Attempt {attempt + 1}: VideoCapture not opened")
+                    print(f"   Attempt {attempt}: VideoCapture not opened")
                 
-                if attempt == 0:
-                    print(f"\n⚠️  Network camera connection failed - trying {max_retries} times before USB fallback\n")
+                if attempt == 1:
+                    print(f"⚠️  Network camera not found yet. Keeping background connection valid. Retrying every {retry_delay}s...")
                 
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
+                # Sleep before retry
+                time.sleep(retry_delay)
                 
             except Exception as e:
-                print(f"   Attempt {attempt + 1}: Exception - {type(e).__name__}: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-        
-        print(f"❌ Network camera connection failed after {max_retries} attempts")
-        print(f"\n🔄 Falling back to USB camera...\n")
-        
-        # Fallback to USB camera (index 0)
-        if self._connect_to_usb():
-            return
-        
-        # If both fail, set error
-        self.connection_error = f"Could not connect to network camera ({CAMERA_STREAM_URL}) or USB camera"
-        print(f"❌ {self.connection_error}")
+                print(f"   Attempt {attempt}: Exception - {type(e).__name__}: {e}")
+                time.sleep(retry_delay)
     
     def _connect_to_usb(self):
         """Try to connect to USB camera (with retries for release race conditions)"""
