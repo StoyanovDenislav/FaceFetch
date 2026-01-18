@@ -130,9 +130,15 @@ def login_required(f):
         
         try:
             payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=['HS256'])
-            # Add user_id to request/g context or session if needed
-            # For now, we update session to keep compatibility with existing code
+            # Add user_id to session and hydrate display info from DB for templates
             session['user_id'] = payload['user_id']
+            if 'user_name' not in session or 'user_role' not in session:
+                user = get_user_by_id(payload['user_id'])
+                if user:
+                    # Prefer full name, fall back to email if missing
+                    display_name = f"{user.get('first_name','').strip()} {user.get('last_name','').strip()}".strip()
+                    session['user_name'] = display_name or user.get('email', 'User')
+                    session['user_role'] = user.get('role', 'viewer')
         except jwt.ExpiredSignatureError:
             if request.path.startswith('/api/'):
                 return jsonify({'message': 'Token expired'}), 401

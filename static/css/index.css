@@ -1,3 +1,11 @@
+@font-face {
+  font-family: 'Horizon';
+  src: url('../fonts/Horizon.otf') format('opentype'),
+       url('../fonts/Horizon_Outlined.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -16,7 +24,7 @@
 }
 
 body {
-  font-family: "Montserrat", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-family: 'Montserrat', 'Horizon', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
   background: var(--primary);
   color: var(--light);
   min-height: 100vh;
@@ -117,11 +125,28 @@ header::after {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid var(--line);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
 }
 
 .user-name {
   font-weight: 700;
   letter-spacing: 0.02em;
+  color: #ffde59;
+}
+
+.user-role-badge {
+  display: inline-block;
+  font-size: 0.9em;
+  background: rgba(12, 85, 105, 0.85);
+  color: #ffde59;
+  padding: 6px 12px;
+  border-radius: 999px;
+  margin-left: 6px;
+  border: 1px solid rgba(255, 222, 89, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
 }
 
 .logout-link {
@@ -146,7 +171,7 @@ header::after {
 }
 
 h1 {
-  font-family: "Bebas Neue", "Impact", "Anton", sans-serif;
+  font-family: 'Horizon', 'Bebas Neue', 'Impact', 'Anton', sans-serif;
   letter-spacing: 0.06em;
   font-size: 2.8em;
   color: var(--accent);
