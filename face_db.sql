@@ -10,35 +10,66 @@ CREATE DATABASE facefetch;
 USE facefetch;
  
 -- ============================================
--- USERS TABLE
+-- USERS TABLE (Authentication)
 -- ============================================
 CREATE TABLE users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  first_name VARCHAR(100) NOT NULL,
+  last_name VARCHAR(100) NOT NULL,
+  company VARCHAR(255),
+  role ENUM('operator', 'viewer') NOT NULL DEFAULT 'viewer',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+ 
+-- ============================================
+-- KNOWN FACES TABLE (Biometrics)
+-- ============================================
+CREATE TABLE known_faces (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(120) NOT NULL,
   active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
- 
-CREATE INDEX idx_name ON users(name);
-CREATE INDEX idx_active ON users(active);
+
+CREATE INDEX idx_known_faces_name ON known_faces(name);
+CREATE INDEX idx_known_faces_active ON known_faces(active);
+
+-- ============================================
+-- REFRESH TOKENS TABLE
+-- ============================================
+CREATE TABLE refresh_tokens (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  token_hash VARCHAR(255) NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_refresh_tokens_users FOREIGN KEY (user_id)
+    REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE INDEX idx_refresh_token_hash ON refresh_tokens(token_hash);
+
  
 -- ============================================
 -- FACE PROFILES TABLE
 -- ============================================
 CREATE TABLE face_profiles (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT NOT NULL,
+  known_face_id INT NOT NULL,
   label VARCHAR(120),
   image_path VARCHAR(255),
   face_encoding LONGBLOB NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_face_profiles_users FOREIGN KEY (user_id)
-    REFERENCES users(id) ON DELETE CASCADE
+  CONSTRAINT fk_face_profiles_known_faces FOREIGN KEY (known_face_id)
+    REFERENCES known_faces(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
  
-CREATE INDEX ix_face_profiles_user_id ON face_profiles(user_id);
+CREATE INDEX ix_face_profiles_known_face_id ON face_profiles(known_face_id);
 CREATE INDEX ix_face_profiles_label ON face_profiles(label);
  
 -- ============================================
@@ -62,7 +93,7 @@ CREATE INDEX ix_sessions_ended_at ON sessions(ended_at);
 CREATE TABLE detection_events (
   id INT AUTO_INCREMENT PRIMARY KEY,
   session_id INT NOT NULL,
-  user_id INT,
+  known_face_id INT,
   timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   result VARCHAR(20) NOT NULL,
   confidence DECIMAL(5,4) CHECK (confidence >= 0 AND confidence <= 1),
@@ -73,12 +104,12 @@ CREATE TABLE detection_events (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_detection_events_sessions FOREIGN KEY (session_id)
     REFERENCES sessions(id) ON DELETE CASCADE,
-  CONSTRAINT fk_detection_events_users FOREIGN KEY (user_id)
-    REFERENCES users(id) ON DELETE SET NULL
+  CONSTRAINT fk_detection_events_known_faces FOREIGN KEY (known_face_id)
+    REFERENCES known_faces(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
  
 CREATE INDEX ix_detection_events_session_id ON detection_events(session_id);
-CREATE INDEX ix_detection_events_user_id ON detection_events(user_id);
+CREATE INDEX ix_detection_events_known_face_id ON detection_events(known_face_id);
 CREATE INDEX ix_detection_events_timestamp ON detection_events(timestamp);
 CREATE INDEX ix_detection_events_result ON detection_events(result);
  
@@ -144,28 +175,31 @@ CREATE INDEX ix_statistics_date ON statistics(date);
 -- ============================================
 -- COMPOSITE INDEXES FOR PERFORMANCE
 -- ============================================
-CREATE INDEX ix_detection_user_time ON detection_events(user_id, timestamp);
+-- ============================================
+-- COMPOSITE INDEXES FOR PERFORMANCE
+-- ============================================
+CREATE INDEX ix_detection_known_face_time ON detection_events(known_face_id, timestamp);
 CREATE INDEX ix_detection_result_time ON detection_events(result, timestamp);
- 
+
 -- ============================================
 -- VIEWS
 -- ============================================
- 
+
 CREATE OR REPLACE VIEW recent_detections AS
 SELECT
   de.id,
   s.id as session_id,
-  u.name as user_name,
+  kf.name as face_name,
   de.result,
   de.confidence,
   de.timestamp,
   CONCAT(de.face_location_left, ',', de.face_location_top, ',', de.face_location_right, ',', de.face_location_bottom) as face_location
 FROM detection_events de
 LEFT JOIN sessions s ON de.session_id = s.id
-LEFT JOIN users u ON de.user_id = u.id
+LEFT JOIN known_faces kf ON de.known_face_id = kf.id
 ORDER BY de.timestamp DESC
 LIMIT 100;
- 
+
 CREATE OR REPLACE VIEW today_statistics AS
 SELECT
   DATE(de.timestamp) as date,
@@ -176,28 +210,28 @@ SELECT
 FROM detection_events de
 WHERE DATE(de.timestamp) = CURDATE()
 GROUP BY DATE(de.timestamp);
- 
+
 -- ============================================
 -- STORED PROCEDURES / FUNCTIONS
 -- ============================================
- 
+
 DELIMITER $$
- 
-CREATE PROCEDURE get_user_detection_summary(IN p_user_id INT)
+
+CREATE PROCEDURE get_face_detection_summary(IN p_known_face_id INT)
 BEGIN
   SELECT
-    u.id as user_id,
-    u.name as user_name,
+    kf.id as known_face_id,
+    kf.name as face_name,
     COUNT(de.id) as total_detections,
     SUM(CASE WHEN de.result = 'recognized' THEN 1 ELSE 0 END) as recognized_count,
     SUM(CASE WHEN de.result = 'unknown' THEN 1 ELSE 0 END) as unknown_count,
     SUM(CASE WHEN de.result = 'spoof' THEN 1 ELSE 0 END) as spoof_count,
     MAX(de.timestamp) as last_detection,
     AVG(de.confidence) as avg_confidence
-  FROM users u
-  LEFT JOIN detection_events de ON u.id = de.user_id
-  WHERE u.id = p_user_id
-  GROUP BY u.id, u.name;
+  FROM known_faces kf
+  LEFT JOIN detection_events de ON kf.id = de.known_face_id
+  WHERE kf.id = p_known_face_id
+  GROUP BY kf.id, kf.name;
 END$$
  
 CREATE PROCEDURE archive_old_detections(IN days_to_keep INT)

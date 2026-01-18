@@ -381,12 +381,12 @@ class FaceRecognition:
                 try:
                     with app.app_context():
                         # Import models here to avoid circular dependency
-                        from models import User, FaceProfile
+                        from models import KnownFace, FaceProfile
                         
                         print("📸 Loading known faces from database...")
                         
-                        # Query all active users with face profiles
-                        face_profiles = FaceProfile.query.join(User).filter(User.active == True).all()
+                        # Query all active known faces with face profiles
+                        face_profiles = FaceProfile.query.join(KnownFace).filter(KnownFace.active == True).all()
                         
                         if face_profiles:
                             print(f"Found {len(face_profiles)} face profiles")

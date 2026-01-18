@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Logged Out - Facial Recognition System</title>
+        <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/logout.css') }}"
+    />
+  </head>
+  <body>
+    <div class="logout-container">
+      <div class="logout-icon">👋</div>
+      <h1>You're Logged Out</h1>
+      <p>You have been successfully logged out of FaceFetch.</p>
+      <a href="/login" class="logout-btn">Sign In Again</a>
+
+      <div class="features">
+        <h3>About FaceFetch</h3>
+        <ul>
+          <li>Real-time facial recognition</li>
+          <li>Live video streaming</li>
+          <li>Detection history tracking</li>
+          <li>Security alerts and monitoring</li>
+          <li>Multi-camera support</li>
+        </ul>
+      </div>
+    </div>
+  </body>
+</html>
