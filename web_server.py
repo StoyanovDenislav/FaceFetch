@@ -20,10 +20,10 @@ load_dotenv()
 from facial_recognition_fixed import FaceRecognition
 
 # Import database from models
-from models import db, User, FaceProfile, Session, DetectionEvent, Command
+from models import db, User, KnownFace, FaceProfile, Session, DetectionEvent, Command
 
 # Import Auth Blueprint and helpers
-from api.routes.auth import auth_bp, init_auth_db, login_required
+from api.routes.auth import auth_bp, init_auth_db, login_required, role_required
 
 DB_USER = os.environ.get('DB_USER', 'root')
 DB_PASSWORD = os.environ.get('DB_PASSWORD', '')
@@ -433,8 +433,10 @@ def index():
     return render_template('index.html')
 
 @app.route('/register_face')
+@login_required
+@role_required('operator')
 def register():
-    """Registration page"""
+    """Registration page - Operator only"""
     return render_template('register_face.html')
 
 @app.route('/video_feed')
