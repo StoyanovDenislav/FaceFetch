@@ -15,6 +15,7 @@
       <h1>You're Logged Out</h1>
       <p>You have been successfully logged out of FaceFetch.</p>
       <a href="/login" class="logout-btn">Sign In Again</a>
+      <p style="margin-top: 12px; color: #666;">Redirecting to login shortly...</p>
 
       <div class="features">
         <h3>About FaceFetch</h3>
@@ -27,5 +28,12 @@
         </ul>
       </div>
     </div>
+
+    <script>
+      // Auto-redirect after logout
+      setTimeout(() => {
+        window.location.href = "/login";
+      }, 1800);
+    </script>
   </body>
 </html>

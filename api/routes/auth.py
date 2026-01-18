@@ -320,10 +320,11 @@ def logout():
     
     session.clear()
     
-    response = make_response(redirect(url_for('auth.login')))
+    response = make_response(render_template('logout_page.html'))
+    # Clear tokens on all paths we might have used
     response.set_cookie('access_token', '', expires=0)
+    response.set_cookie('refresh_token', '', expires=0, path='/')
     response.set_cookie('refresh_token', '', expires=0, path='/api/auth')
-    
     return response
 
 @auth_bp.route('/api/auth/status')
