@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Facial Recognition System</title>
+  <title>C.A.T by FaceFetch</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}" />
 </head>
 
@@ -30,41 +30,83 @@
   
   <div class="container">
     <header>
-      <div class="header-actions">
-        {% if session.get('user_id') %}
-        <div class="user-greeting">
-          Hi, {{ session.get('user_name') }}
-          <span class="user-role-badge">
-            {{ session.get('user_role', 'viewer')|upper }}
-          </span>
+      <div class="nav-bar">
+        <div class="brand">
+          <div class="brand-mark">C.A.T</div>
+          <div class="brand-sub">by FaceFetch</div>
         </div>
-        <a href="{{ url_for('auth.logout') }}" class="logout-link">Logout</a>
-        {% endif %}
+        <div class="nav-actions">
+          {% if session.get('user_role') == 'operator' %}
+          <a href="/register_face" class="primary-link primary-link-compact">
+            Register Face
+          </a>
+          {% endif %}
+          {% if session.get('user_id') %}
+          <div class="user-chip">
+            <span class="user-name">Hi, {{ session.get('user_name') }}</span>
+            <span class="user-role-badge">
+              {{ session.get('user_role', 'viewer')|upper }}
+            </span>
+          </div>
+          <a href="{{ url_for('auth.logout') }}" class="logout-link">Logout</a>
+          {% endif %}
+        </div>
       </div>
-      <h1>🔒 Facial Recognition System</h1>
-      <p class="subtitle">Real-time Face Detection & Anti-Spoofing</p>
 
-      {% if session.get('user_role') == 'operator' %}
-      <div class="register-link">
-        <a href="/register_face" class="primary-link">
-          👤 Register New Face
-        </a>
-      </div>
-      {% endif %}
+      <div class="eyebrow">Cozy Autonomous Tracker · FaceFetch</div>
+      <h1>C.A.T</h1>
+      <p class="subtitle">Soft-focus monitoring with live anti-spoofing</p>
     </header>
 
     <div class="main-content">
-      <div class="video-container">
-        <h2 class="video-title">
-          📹 Live Camera Feed
-        </h2>
+      <div class="video-container animated-panel">
+        <h2 class="video-title">Live Camera Feed</h2>
         <div class="video-wrapper">
           <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed" />
         </div>
       </div>
 
-      <div class="stats-container">
-        <h2>📊 System Status</h2>
+      <div class="alert-panel animated-panel">
+        <h2>
+          Security Alerts
+          <button
+            id="clearAlerts"
+            class="button button-danger button-compact float-right"
+          >
+            Clear All
+          </button>
+        </h2>
+        <div id="alertsContainer">
+          <div class="no-faces">No alerts</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detection-panel animated-panel">
+      <h2>Active Detections</h2>
+      <div id="facesContainer">
+        <div class="no-faces">No faces detected</div>
+      </div>
+    </div>
+
+    <div class="lower-grid">
+      <div class="detection-panel animated-panel">
+        <h2>
+          Detection Timeline
+          <button
+            id="clearHistory"
+            class="button button-danger button-compact float-right"
+          >
+            Clear History
+          </button>
+        </h2>
+        <div id="historyContainer">
+          <div class="no-faces">No history yet</div>
+        </div>
+      </div>
+
+      <div class="stats-container animated-panel">
+        <h2>System Snapshot</h2>
         <div class="stat-item">
           <div class="stat-label">Camera Type</div>
           <div class="stat-value" id="cameraType">Loading...</div>
@@ -84,63 +126,8 @@
       </div>
     </div>
 
-    <div class="detection-panel">
-      <h2>👥 Detected Faces</h2>
-      <div id="facesContainer">
-        <div class="no-faces">No faces detected</div>
-      </div>
-    </div>
-
-    <div class="detection-panel">
-      <h2>
-        📜 Detection History
-        <button
-          id="clearHistory"
-          class="button button-danger button-compact float-right"
-        >
-          Clear History
-        </button>
-      </h2>
-      <div id="historyContainer">
-        <div class="no-faces">No history yet</div>
-      </div>
-    </div>
-
-    <!-- Security Alerts Panel -->
-    <div class="alert-panel">
-      <h2>
-        🚨 Security Alerts
-        <button
-          id="clearAlerts"
-          class="button button-danger button-compact float-right"
-        >
-          Clear All
-        </button>
-      </h2>
-      <div id="alertsContainer">
-        <div class="no-faces">No alerts</div>
-      </div>
-    </div>
-
-    <div class="api-info">
-      <h2>🔌 API Endpoints</h2>
-      <p>Access detection data programmatically:</p>
-      <div class="api-endpoint">
-        GET /api/detections - Get current detection results (JSON)
-      </div>
-      <div class="api-endpoint">
-        GET /api/status - Get system status (JSON)
-      </div>
-    </div>
-
-    <div class="detection-panel">
-      <h2>📄 Raw JSON Data</h2>
-      <pre id="jsonData" class="json-data">
-Loading...</pre>
-    </div>
-
     <div class="refresh-status">
-      Auto-refreshing every second •
+      Auto-refreshing every second
       <span id="connectionStatus">Connected</span>
     </div>
   </div>

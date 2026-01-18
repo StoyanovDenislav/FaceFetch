@@ -287,7 +287,10 @@ async function updateDetections() {
     connectionStatus.textContent = "Connected";
     connectionStatus.style.color = "#28a745";
 
-    document.getElementById("jsonData").textContent = JSON.stringify(data, null, 2);
+    const jsonDataEl = document.getElementById("jsonData");
+    if (jsonDataEl) {
+      jsonDataEl.textContent = JSON.stringify(data, null, 2);
+    }
   } catch (error) {
     console.error("Error fetching detections:", error);
     const connectionStatus = document.getElementById("connectionStatus");
