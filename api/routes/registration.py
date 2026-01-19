@@ -23,16 +23,21 @@ def init_registration(face_recognition_inst, database):
 
 @registration_bp.route('/register', methods=['POST'])
 def register_user():
-    """Register a new user with face data"""
+    """Register a new face profile (KnownFace + FaceProfile)"""
     try:
-        from models import User, FaceProfile
+        from models import KnownFace, FaceProfile
         
         data = request.get_json()
-        name = data.get('name')
+        name = (data.get('name') or '').strip()
         image_data = data.get('image')
         
         if not name or not image_data:
             return jsonify({'status': 'error', 'message': 'Name and image are required'}), 400
+        
+        # Prevent duplicate names to keep in-memory lists consistent
+        existing = KnownFace.query.filter_by(name=name).first()
+        if existing:
+            return jsonify({'status': 'error', 'message': f'Face \"{name}\" already exists'}), 409
         
         # Decode base64 image
         if ',' in image_data:
@@ -48,15 +53,15 @@ def register_user():
         if not encodings:
             return jsonify({'status': 'error', 'message': 'No face detected in image'}), 400
         
-        # Create user
-        user = User(name=name, active=True)
-        db.session.add(user)
-        db.session.flush()
+        # Create KnownFace entry
+        known_face = KnownFace(name=name, active=True)
+        db.session.add(known_face)
+        db.session.flush()  # get ID for profile FK
         
-        # Create face profile
+        # Create face profile linked to KnownFace
         encoding_binary = encodings[0].tobytes()
         face_profile = FaceProfile(
-            user_id=user.id,
+            known_face_id=known_face.id,
             label=name,
             image_path=None,
             face_encoding=encoding_binary
@@ -71,8 +76,8 @@ def register_user():
         
         return jsonify({
             'status': 'success',
-            'message': f'User {name} registered successfully',
-            'user_id': user.id
+            'message': f'Face {name} registered successfully',
+            'face_id': known_face.id
         }), 201
         
     except Exception as e:
@@ -81,19 +86,19 @@ def register_user():
 
 @registration_bp.route('/users', methods=['GET'])
 def list_users():
-    """List all registered users"""
+    """List all registered faces (KnownFace records)"""
     try:
-        from models import User, FaceProfile
+        from models import KnownFace, FaceProfile
         
-        users = User.query.all()
+        faces = KnownFace.query.order_by(KnownFace.id.asc()).all()
         user_list = []
         
-        for user in users:
-            face_profiles = FaceProfile.query.filter_by(user_id=user.id).all()
+        for face in faces:
+            face_profiles = FaceProfile.query.filter_by(known_face_id=face.id).all()
             user_list.append({
-                'id': user.id,
-                'name': user.name,
-                'active': user.active,
+                'id': face.id,
+                'name': face.name,
+                'active': face.active,
                 'face_profiles': len(face_profiles)
             })
         
@@ -104,20 +109,20 @@ def list_users():
 
 @registration_bp.route('/users/<int:user_id>', methods=['GET'])
 def get_user(user_id):
-    """Get user details"""
+    """Get face details"""
     try:
-        from models import User
+        from models import KnownFace
         
-        user = User.query.get(user_id)
-        if not user:
+        face = KnownFace.query.get(user_id)
+        if not face:
             return jsonify({'status': 'error', 'message': 'User not found'}), 404
         
         return jsonify({
             'status': 'success',
             'user': {
-                'id': user.id,
-                'name': user.name,
-                'active': user.active
+                'id': face.id,
+                'name': face.name,
+                'active': face.active
             }
         }), 200
         
@@ -126,27 +131,27 @@ def get_user(user_id):
 
 @registration_bp.route('/users/<int:user_id>', methods=['DELETE'])
 def delete_user(user_id):
-    """Delete a user and their face profiles"""
+    """Delete a face and its profiles"""
     try:
-        from models import User, FaceProfile
+        from models import KnownFace, FaceProfile
         
-        user = User.query.get(user_id)
-        if not user:
+        face = KnownFace.query.get(user_id)
+        if not face:
             return jsonify({'status': 'error', 'message': 'User not found'}), 404
         
-        user_name = user.name
+        face_name = face.name
         
         # Delete face profiles (cascade should handle this, but being explicit)
-        FaceProfile.query.filter_by(user_id=user_id).delete()
+        FaceProfile.query.filter_by(known_face_id=user_id).delete()
         
-        # Delete user
-        db.session.delete(user)
+        # Delete face entry
+        db.session.delete(face)
         db.session.commit()
         
         # Remove from known faces in memory
-        if face_recognition_instance and user_name in face_recognition_instance.known_face_names:
+        if face_recognition_instance and face_name in face_recognition_instance.known_face_names:
             try:
-                idx = face_recognition_instance.known_face_names.index(user_name)
+                idx = face_recognition_instance.known_face_names.index(face_name)
                 face_recognition_instance.known_face_names.pop(idx)
                 face_recognition_instance.known_face_encodings.pop(idx)
             except ValueError:
@@ -154,7 +159,7 @@ def delete_user(user_id):
         
         return jsonify({
             'status': 'success',
-            'message': f'User {user_name} deleted successfully'
+            'message': f'User {face_name} deleted successfully'
         }), 200
         
     except Exception as e:
