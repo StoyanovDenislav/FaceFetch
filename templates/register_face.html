@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Face Registration</title>
-        <link
+    <link
       rel="stylesheet"
       href="{{ url_for('static', filename='css/register_face.css') }}"
     />
@@ -13,13 +13,13 @@
   <body>
     <div class="container">
       <header>
-        <h1>👤 Face Registration</h1>
+        <h1>Face Registration</h1>
         <p>Register new users with face recognition</p>
       </header>
 
       <div class="nav">
         <button id="backToFeedBtn" class="text-link-button">
-          ← Back to Video Feed
+          Back to Video Feed
         </button>
       </div>
 
@@ -31,7 +31,7 @@
       <div class="grid">
         <!-- Registration Form -->
         <div class="card">
-          <h2>📸 Register New User</h2>
+          <h2>Register New User</h2>
 
           <div id="registerMessage"></div>
 
@@ -50,10 +50,7 @@
           </div>
           <canvas id="canvas"></canvas>
 
-          <div
-            class="preview-container hidden"
-            id="previewContainer"
-          >
+          <div class="preview-container hidden" id="previewContainer">
             <label>Captured Image:</label>
             <img id="previewImage" class="preview-image" alt="Captured face" />
           </div>
@@ -66,7 +63,7 @@
 
         <!-- User List -->
         <div class="card">
-          <h2>👥 Registered Users</h2>
+          <h2>Registered Users</h2>
 
           <div id="userMessage"></div>
 
@@ -79,9 +76,9 @@
       </div>
     </div>
 
-  <script
-    src="{{ url_for('static', filename='js/register_face.js') }}"
-    defer
-  ></script>
+    <script
+      src="{{ url_for('static', filename='js/register_face.js') }}"
+      defer
+    ></script>
   </body>
 </html>

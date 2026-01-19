@@ -25,10 +25,9 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const stopStream = () => {
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-      stream = null;
-    }
+    if (!stream) return;
+    stream.getTracks().forEach((track) => track.stop());
+    stream = null;
   };
 
   const setModeStatus = (text, color) => {
@@ -71,9 +70,7 @@ document.addEventListener("DOMContentLoaded", () => {
       deleteButton.dataset.userName = user.name;
       deleteButton.textContent = "Delete";
 
-      deleteButton.addEventListener("click", () => {
-        handleDelete(user.id, user.name);
-      });
+      deleteButton.addEventListener("click", () => handleDelete(user.id, user.name));
 
       item.appendChild(info);
       item.appendChild(deleteButton);
@@ -84,7 +81,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function initializeRegistrationMode() {
     try {
-      setModeStatus('dY", Initializing registration mode...', "");
+      setModeStatus("Initializing registration mode...", "");
 
       const enterResponse = await fetch("/api/control/enter_registration", {
         method: "POST",
@@ -95,8 +92,8 @@ document.addEventListener("DOMContentLoaded", () => {
         throw new Error(enterData.message || "Failed to enter registration mode");
       }
 
-      console.log("Гo. Entered registration mode:", enterData.message);
-      setModeStatus("Лил Registration Mode - Camera Ready", "#ffc107");
+      console.log("Entered registration mode:", enterData.message);
+      setModeStatus("Registration Mode - Camera Ready", "#ffc107");
 
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -106,11 +103,11 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       video.srcObject = stream;
 
-      console.log("Гo. Camera started successfully");
+      console.log("Camera started successfully");
       captureBtn.disabled = false;
     } catch (err) {
       showMessage("registerMessage", "Error initializing: " + err.message, "error");
-      setModeStatus("Г?O Error initializing registration mode", "#dc3545");
+      setModeStatus("Error initializing registration mode", "#dc3545");
     }
   }
 
@@ -182,8 +179,8 @@ document.addEventListener("DOMContentLoaded", () => {
           const exitData = await exitResponse.json();
 
           if (exitResponse.ok) {
-            console.log("バ. Face recognition restarted:", exitData.message);
-            setModeStatus("バ. Ready - Redirecting...", "#28a745");
+            console.log("Face recognition restarted:", exitData.message);
+            setModeStatus("Ready - redirecting...", "#28a745");
             setTimeout(() => {
               window.location.href = "/";
             }, 1000);
@@ -257,7 +254,7 @@ document.addEventListener("DOMContentLoaded", () => {
     e.preventDefault();
     backToFeedBtn.disabled = true;
     backToFeedBtn.textContent = "Restoring Feed...";
-    setModeStatus('dY", Restoring Face Recognition...', "#ffc107");
+    setModeStatus("Restoring face recognition...", "#ffc107");
 
     stopStream();
 
@@ -268,7 +265,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const exitData = await exitResponse.json();
 
       if (exitResponse.ok) {
-        console.log("バ. Face recognition restarted:", exitData.message);
+        console.log("Face recognition restarted:", exitData.message);
         window.location.href = "/";
       } else {
         console.error("Failed to restart module:", exitData.message);
