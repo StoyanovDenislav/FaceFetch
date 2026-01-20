@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Register - Facial Recognition System</title>
-        <link
+    <title>Sign Up - Facial Recognition System</title>
+    <link
       rel="stylesheet"
       href="{{ url_for('static', filename='css/register.css') }}"
     />
@@ -12,12 +12,18 @@
   <body>
     <div class="register-container">
       <div class="register-header">
+        <p class="eyebrow">Create account</p>
         <h1>FaceFetch</h1>
-        <p>Create Your Account</p>
+        <p class="subtitle">One profile for console access, alerts, and registrations.</p>
+        <div class="progress-pills">
+          <span class="pill active">Account</span>
+          <span class="pill">Security</span>
+          <span class="pill">Ready</span>
+        </div>
       </div>
 
-      <div class="error-message" id="errorMessage"></div>
-      <div class="success-message" id="successMessage"></div>
+      <div class="error-message status-message" id="errorMessage"></div>
+      <div class="success-message status-message" id="successMessage"></div>
 
       <form id="registerForm" method="POST" action="/register">
         <div class="form-row">
@@ -101,6 +107,17 @@
           </label>
         </div>
 
+        <div class="helper-row">
+          <div class="hint">
+            <span class="dot"></span>
+            Use at least 8 characters with mixed case, a number, and a symbol.
+          </div>
+          <div class="hint">
+            <span class="dot"></span>
+            Company is optional but helps personalize alerts.
+          </div>
+        </div>
+
         <button type="submit" class="register-btn" id="registerBtn">
           Create Account
         </button>
@@ -109,6 +126,15 @@
           <p>Creating account...</p>
         </div>
       </form>
+
+      <div class="divider">
+        <span>OR</span>
+      </div>
+
+      <div class="social-buttons">
+        <button class="social-btn" data-provider="google">Google</button>
+        <button class="social-btn" data-provider="github">GitHub</button>
+      </div>
 
       <div class="login-link">
         Already have an account? <a href="/login">Sign in here</a>
