@@ -1,3 +1,18 @@
+:root {
+  --primary: #063b4a;
+  --primary-dark: #042f3a;
+  --primary-light: #0c5569;
+  --accent: #ffde59;
+  --accent-strong: #f0c419;
+  --light: #f4f6f7;
+  --muted: #c8d1d6;
+  --border: rgba(255, 222, 89, 0.25);
+  --card-bg: rgba(255, 255, 255, 0.08);
+  --shadow: 0 16px 35px rgba(0, 0, 0, 0.35);
+  --radius: 18px;
+  --transition: all 0.25s ease;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -5,91 +20,96 @@
 }
 
 body {
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  font-family: "Montserrat", "Segoe UI", Tahoma, sans-serif;
+  background: linear-gradient(135deg, #042f3a 0%, #063b4a 25%, #08485b 50%, #0a5569 75%, #0b6073 100%);
   min-height: 100vh;
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 20px;
+  padding: 24px;
+  color: var(--light);
 }
 
 .logout-container {
-  background: white;
-  border-radius: 15px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
   width: 100%;
-  max-width: 400px;
-  padding: 40px;
+  max-width: 440px;
+  padding: 40px 34px;
   text-align: center;
+  border: 1px solid var(--border);
+  backdrop-filter: blur(12px);
 }
 
 .logout-icon {
-  font-size: 4em;
-  margin-bottom: 20px;
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent), #ffe680);
+  color: var(--primary-dark);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-size: 1.1rem;
+  margin: 0 auto 20px;
+  box-shadow: 0 10px 26px rgba(255, 222, 89, 0.45);
 }
 
 .logout-container h1 {
-  color: #667eea;
-  font-size: 2em;
+  color: var(--accent);
+  font-size: 1.9rem;
   margin-bottom: 10px;
 }
 
 .logout-container p {
-  color: #666;
-  font-size: 1em;
-  margin-bottom: 30px;
+  color: var(--muted);
+  font-size: 1rem;
+  margin-bottom: 26px;
   line-height: 1.6;
 }
 
 .logout-btn {
   display: inline-block;
-  padding: 12px 30px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  padding: 12px 26px;
+  background: linear-gradient(135deg, var(--accent), #ffe680);
+  color: var(--primary-dark);
   text-decoration: none;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 0.3s ease;
-  border: none;
-  cursor: pointer;
-  font-size: 1em;
+  border-radius: 12px;
+  font-weight: 700;
+  transition: var(--transition);
+  border: 1px solid transparent;
+  box-shadow: 0 8px 22px rgba(255, 222, 89, 0.35);
 }
 
 .logout-btn:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+  box-shadow: 0 12px 30px rgba(255, 222, 89, 0.45);
 }
 
 .features {
-  margin-top: 30px;
-  padding-top: 30px;
-  border-top: 2px solid #e0e0e0;
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
   text-align: left;
 }
 
 .features h3 {
-  color: #667eea;
-  margin-bottom: 15px;
-  font-size: 1.1em;
+  color: var(--light);
+  margin-bottom: 12px;
+  font-size: 1.05rem;
 }
 
 .features ul {
   list-style: none;
-  color: #666;
-  font-size: 0.95em;
+  color: var(--muted);
+  font-size: 0.95rem;
 }
 
 .features li {
   padding: 8px 0;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.features li::before {
-  content: "バ";
-  color: #28a745;
-  font-weight: bold;
-  margin-right: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .features li:last-child {
@@ -98,14 +118,6 @@ body {
 
 @media (max-width: 480px) {
   .logout-container {
-    padding: 30px 20px;
-  }
-
-  .logout-container h1 {
-    font-size: 1.5em;
-  }
-
-  .logout-icon {
-    font-size: 3em;
+    padding: 28px 20px;
   }
 }

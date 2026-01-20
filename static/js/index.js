@@ -129,7 +129,7 @@ function buildAlertItem(alert, index) {
 
   const typeSpan = document.createElement("span");
   typeSpan.className = "alert-type";
-  typeSpan.textContent = alert.type === "spoof" ? "dYs® SPOOF DETECTED" : "ƒsÿ‹,? UNKNOWN PERSON";
+  typeSpan.textContent = alert.type === "spoof" ? "SPOOF DETECTED" : "UNKNOWN PERSON";
 
   const timeSpan = document.createElement("span");
   timeSpan.className = "alert-time";
