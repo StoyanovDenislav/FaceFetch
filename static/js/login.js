@@ -48,8 +48,21 @@ document.addEventListener("DOMContentLoaded", () => {
       } else if (response.status === 401) {
         showError("Invalid email or password.");
       } else {
-        const data = await response.json();
-        showError(data.message || "Login failed. Please try again.");
+        // Fall back gracefully if the server returns HTML instead of JSON (e.g., 302/500 pages)
+        let message = "Login failed. Please try again.";
+        try {
+          const contentType = response.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            const data = await response.json();
+            message = data.message || message;
+          } else {
+            const text = await response.text();
+            message = text || message;
+          }
+        } catch (parseErr) {
+          console.error("Error parsing login response:", parseErr);
+        }
+        showError(message);
       }
     } catch (error) {
       console.error("Error:", error);
